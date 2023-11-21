@@ -8,7 +8,7 @@ typedef struct
     double balance;
     double reward_rate;
     
-    double transaction_tracter;
+    double transaction_tracker;
 
     char out_file[64];
 
