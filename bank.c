@@ -49,40 +49,51 @@ int main(int argc, char* argv[]) {
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");  // get rid of newline
-        printf("index: %s\n", line_buf);
+        token_buffer = str_filler(line_buf, "\n");
+        printf("----- %s -----\n", line_buf);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
         token_buffer = str_filler(line_buf, "\n");
         strcpy(entry.account_number, token_buffer.command_list[0]);
-        printf("entry.account_number: %s\n", entry.account_number);
+        printf("account number: %s\n", line_buf);
+        printf("entry.account_number: %s\n\n", entry.account_number);
 
         //---  line n + 2: password (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");  // get rid of newline
+        token_buffer = str_filler(line_buf, "\n");
+        strcpy(entry.password, token_buffer.command_list[0]);
         printf("password: %s\n", line_buf);
+        printf("entry.password: %s\n\n", entry.password);
 
         //--- line n + 3: initial balance (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");  // get rid of newline
+        token_buffer = str_filler(line_buf, "\n");
         // sscanf(token_buffer.command_list[0], "%lf", &entry.balance);
         entry.balance = atof(token_buffer.command_list[0]);
-        
         printf("initial balance: %s\n", line_buf);
-        printf("entry.balance: %lf\n", entry.balance);
+        printf("entry.balance: %f\n\n", entry.balance);
 
         //--- line n + 4: reward rate (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");  // get rid of newline
+        token_buffer = str_filler(line_buf, "\n");
+        entry.reward_rate = atof(token_buffer.command_list[0]);
         printf("reward rate: %s\n", line_buf);
+        printf("entry.reward_rate: %f\n\n", entry.reward_rate);
+
+        // store the new entry in the array
+        account_array[i] = entry;
     }
 
-    /* GET TRANSACTION INFO */
+    // TESTING: print account array
+    for (int i = 0; i < num_accounts; i++) {
+        printf("account %d: %s\n", i, account_array[i].account_number);
+    }
+
+    /* TODO: GET TRANSACTION INFO */
     // 1. read each line of file after the account info lines
     // 2. use command_line struct to tokenize them for different fields
 
-    // TESTING: print the rest of the file (transaction lines)
     // while (getline(&line_buf, &len, fp) != -1) {
     //     printf("%s", line_buf);
     // }
