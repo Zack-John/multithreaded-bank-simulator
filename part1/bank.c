@@ -80,8 +80,6 @@ int main(int argc, char* argv[]) {
     getline(&line_buf, &len, fp);
     num_accounts = atoi(line_buf);
 
-    printf("num_accounts: %d\n", num_accounts);
-
     // NOTE: an array might be really slow here
     // if its an issue, use a hashmap
     account_array = (account *)malloc(sizeof(account) * num_accounts);
@@ -98,7 +96,7 @@ int main(int argc, char* argv[]) {
         //--- line n: index number
         getline(&line_buf, &len, fp);
         token_buffer = str_filler(line_buf, "\n");
-        // printf("----- %s -----\n", line_buf);
+        printf("----- %s -----\n", line_buf);
         free_command_line(&token_buffer);
 
         //--- line n + 1: account number (char *)
@@ -126,13 +124,15 @@ int main(int argc, char* argv[]) {
         entry.reward_rate = atof(token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
-        //--- init transaction tracker
+        //--- transaction tracker starts at 0
         entry.transaction_tracker = 0.00;
 
         //--- init out_file path
         char out_path[64];
         sprintf(out_path, "./output/account%d.txt", i);
         strcpy(entry.out_file, out_path);
+
+        // write initial balance to file
 
         // store the new entry in the array
         account_array[i] = entry;
@@ -150,6 +150,8 @@ int main(int argc, char* argv[]) {
         fprintf(fp2, "account: %d\n", i);
         fclose(fp2);
     }
+
+    // printf("FILE INIT LOOP COMPLETE\n");
 
     // get current position in the file
     long int pos = ftell(fp);
@@ -175,7 +177,7 @@ int main(int argc, char* argv[]) {
     }
 
     // process transactions one at a time (single threaded environment)
-    for (int i = 0; i < num_transactions; i++) {
+    for (int i = 0; i < num_transactions; i++) {                  // FIXME: num_transactions / set amt for debugging
         // printf("transaction #%d: ", i);
         process_transaction(transactions + i);
     }
