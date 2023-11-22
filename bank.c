@@ -24,9 +24,9 @@ account * account_array;
 
 
 
-
 void * process_transaction(void * arg);
 void * update_balance(void * arg);
+
 
 int main(int argc, char* argv[]) {
 
@@ -141,7 +141,7 @@ int main(int argc, char* argv[]) {
 
     // process transactions one at a time (single threaded environment)
     for (int i = 0; i < 20; i++) {            // FIXME: num_transactions
-        // printf("transaction #%d: \n", i);
+        printf("transaction #%d: ", i);
         process_transaction(transactions + i);
     }
 
@@ -203,7 +203,7 @@ void * process_transaction(void * arg) {
 
     // now that we have the account, check the password
     if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
-        // printf("BAD PASSWORD for account %s!\n", found_account.account_number);
+        printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
         bad_pass++;
         return arg;
     }
@@ -215,23 +215,79 @@ void * process_transaction(void * arg) {
 
     // transfer
     if (strcmp(tran.command_list[0], "T") == 0) {
-        // printf("Transfer - %s ----> %s (%f)\n", tran.command_list[1], tran.command_list[3], tran.command_list[4]);
+
         transfers++;
-        return arg;
+
+
+        // get dest account
+        int dest_index = -1;
+        for (int i = 0; i < num_accounts; i++) {
+
+            if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
+
+                dest_index = i;
+                break;
+            }
+        }
+
+        // make sure we found the dest account
+        if (dest_index == -1) {
+            printf("DEST ACCOUNT NOT FOUND: %s\n", tran.command_list[3]);
+            return arg;
+        }
+
+        // get value of transfer
+        double val = atof(tran.command_list[4]);
+
+        printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
+
+        // printf("Starting balance: %.2f\n", account_array[account_index].balance);
+        // printf("Starting tracker val: %.2f\n", account_array[account_index].transaction_tracker);
+        // printf("Staring DEST balance: %.2f\n", account_array[dest_index].balance);
+
+        // sending account: remove val from balance
+        account_array[account_index].balance -= val;
+
+        // sending account: add val to rewards tracker
+        account_array[account_index].transaction_tracker += val;
+
+        // receiving account: add val to balance
+        account_array[dest_index].balance += val;
+
+        // printf("New balance: %.2f\n", account_array[account_index].balance);
+        // printf("New tracker val: %.2f\n", account_array[account_index].transaction_tracker);
+        // printf("New DEST balance: %.2f\n", account_array[dest_index].balance);
     }
 
     // check balance
     if (strcmp(tran.command_list[0], "C") == 0) {
-        // printf("Check - %s\n", tran.command_list[1]);
+
         checks++;
-        return arg;
+
+        printf("Check: Account %s has a balance of %.2f\n", account_array[account_index].account_number, account_array[account_index].balance);
     }
 
     // deposit
     if (strcmp(tran.command_list[0], "D") == 0) {
-        // printf("Deposit - %s\n", tran.command_list[1]);
+
         deposits++;
-        return arg;
+
+        // get the deposit amount
+        double val = atof(tran.command_list[3]);
+
+        printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
+
+        // printf("Starting balance: %.2f\n", account_array[account_index].balance);
+        // printf("Starting tracker val: %.2f\n", account_array[account_index].transaction_tracker);
+
+        // add the deposited amount to balance
+        account_array[account_index].balance += val;
+
+        // adjust reward tracker value
+        account_array[account_index].transaction_tracker += val;
+
+        // printf("New balance: %.2f\n", account_array[account_index].balance);
+        // printf("New tracker val: %.2f\n", account_array[account_index].transaction_tracker);
     }
 
     // withdraw
@@ -242,7 +298,8 @@ void * process_transaction(void * arg) {
         // get the withdraw amount
         double val = atof(tran.command_list[3]);
         
-        // printf("\n%s - Withdraw: %.2f\n", tran.command_list[1], val);
+        printf("Withdraw: %s - %.2f\n", tran.command_list[1], val);
+
         // printf("Starting balance: %.2f\n", account_array[account_index].balance);
         // printf("Starting tracker val: %.2f\n", account_array[account_index].transaction_tracker);
 
