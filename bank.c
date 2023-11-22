@@ -274,7 +274,6 @@ void * process_transaction(command_line * arg) {
         for (int i = 0; i < num_accounts; i++) {
             if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
                 dest_index = i;
-                printf("found dest account %s @ index %d\n", account_array[dest_index].account_number, i);
                 break;
             }
         }
@@ -325,6 +324,8 @@ void * process_transaction(command_line * arg) {
         
         checks++;
 
+        printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
+
         // write out balance to output file
         // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
 
@@ -363,11 +364,14 @@ void * process_transaction(command_line * arg) {
         // get the withdraw amount
         double val = atof(tran.command_list[3]);
 
+        printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
+
         // remove the withdrawn amount from balance
         account_array[account_index].balance -= val;
 
         // adjust reward tracker value
         account_array[account_index].transaction_tracker += val;
+
 
         // write out new balance
         // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
