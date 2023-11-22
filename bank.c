@@ -19,13 +19,15 @@ int deposits = 0;
 int bad_pass = 0;
 int bad_acct = 0;
 
+int balance_updates = 0;
+
 int num_accounts = 0;
 account * account_array;
 
 
 
-void * process_transaction(void * arg);
-void * update_balance(void * arg);
+void * process_transaction(command_line * arg);
+void * update_balance();
 
 
 int main(int argc, char* argv[]) {
@@ -55,19 +57,16 @@ int main(int argc, char* argv[]) {
 
     printf("num_accounts: %d\n", num_accounts);
 
-    // an array might be really slow here
+    // NOTE: an array might be really slow here
     // if its an issue, use a hashmap
-    // FIXME:
-    // account account_array[num_accounts];
     account_array = (account *)malloc(sizeof(account) * num_accounts);
-
 
     for (int i = 0; i < num_accounts; i++) {
 
         // create struct
         account entry;
 
-        // i dont think i technically need to remove the newlines below...
+        // NOTE: i dont think i technically need to remove the newlines below...
         // i think i could just call it with empty delim arg for strings
         // or skip it all together when doing atoi, atof, etc
 
@@ -111,11 +110,6 @@ int main(int argc, char* argv[]) {
         account_array[i] = entry;
     }
 
-    // TESTING: print account array
-    for (int i = 0; i < num_accounts; i++) {
-        printf("account %d: %s\n", i, account_array[i].account_number);
-    }
-
     // get current position in the file
     long int pos = ftell(fp);
 
@@ -140,7 +134,7 @@ int main(int argc, char* argv[]) {
     }
 
     // process transactions one at a time (single threaded environment)
-    for (int i = 0; i < 20; i++) {            // FIXME: num_transactions
+    for (int i = 0; i < num_transactions; i++) {
         printf("transaction #%d: ", i);
         process_transaction(transactions + i);
     }
@@ -154,10 +148,22 @@ int main(int argc, char* argv[]) {
     printf("withdraws: %d\n", withdraws);
     printf("bad_pass: %d\n", bad_pass);
     printf("bad_acct: %d\n", bad_acct);
-    printf("total: %d\n", (transfers+checks+deposits+withdraws+bad_pass));
+    printf("total: %d\n\n", (transfers + checks + deposits + withdraws + bad_pass));
 
+
+    // calculate rewards
+    int * out = update_balance(account_array);
+    printf("deref'ing out: %d\n", *out);
+
+
+    // write out final account balances
+    FILE * outfp = fopen("output.txt", "w");
+    for (int i = 0; i < num_accounts; i++) {
+        fprintf(outfp, "%d balance:\t%.2f\n\n", i, account_array[i].balance);
+    }
 
     fclose(fp);
+    fclose(outfp);
     free(line_buf);
     free(account_array);
 
@@ -165,14 +171,13 @@ int main(int argc, char* argv[]) {
         free_command_line(&transactions[i]);
     }
 
-
     return 0;
 }
 
 
 
 
-void * process_transaction(void * arg) {
+void * process_transaction(command_line * arg) {
     /* TRANSACTION FORMATS */
     //------------- 0       1       2           3               4
     // transfers:   T src_account password dest_account transfer_amount
@@ -186,9 +191,7 @@ void * process_transaction(void * arg) {
     // find requested account in account_array, store index
     int account_index = -1;
     for (int i = 0; i < num_accounts; i++) {
-
         if (strcmp(account_array[i].account_number, tran.command_list[1]) == 0) {
-
             account_index = i;
             break;
         }
@@ -209,22 +212,16 @@ void * process_transaction(void * arg) {
     }
 
     // if passwords match, handle transaction!
-    // else if (strcmp(account_array[account_index].password, tran.command_list[2]) == 0) {
-    //     printf("Password accepted!\n");
-    // }
 
-    // transfer
+    /* TRANSFER */
     if (strcmp(tran.command_list[0], "T") == 0) {
 
         transfers++;
 
-
         // get dest account
         int dest_index = -1;
         for (int i = 0; i < num_accounts; i++) {
-
             if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
-
                 dest_index = i;
                 break;
             }
@@ -259,15 +256,13 @@ void * process_transaction(void * arg) {
         // printf("New DEST balance: %.2f\n", account_array[dest_index].balance);
     }
 
-    // check balance
+    /* CHECK BALANCE */
     if (strcmp(tran.command_list[0], "C") == 0) {
-
         checks++;
-
         printf("Check: Account %s has a balance of %.2f\n", account_array[account_index].account_number, account_array[account_index].balance);
     }
 
-    // deposit
+    /* DEPOSIT */
     if (strcmp(tran.command_list[0], "D") == 0) {
 
         deposits++;
@@ -290,7 +285,7 @@ void * process_transaction(void * arg) {
         // printf("New tracker val: %.2f\n", account_array[account_index].transaction_tracker);
     }
 
-    // withdraw
+    /* WITHDRAW */
     if (strcmp(tran.command_list[0], "W") == 0) {
 
         withdraws++;
@@ -317,10 +312,21 @@ void * process_transaction(void * arg) {
 }
 
 
-void * update_balance(void * arg) {
-    // "this function will return the number
-    // of times it had to update each account"
-    // ????
+void * update_balance() {
 
-    return arg;
+    // this function will return the number
+    // of times it had to update each account
+
+    for (int i = 0; i < num_accounts; i++) {
+        // get reward value (tracker value * reward rate)
+        double reward = account_array[i].transaction_tracker * account_array[i].reward_rate;
+
+        // add reward value to account balance
+        account_array[i].balance += reward;
+    }
+    
+    balance_updates++;
+
+    void * return_val = &balance_updates;
+    return return_val;
 }
