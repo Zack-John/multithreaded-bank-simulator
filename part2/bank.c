@@ -134,8 +134,6 @@ int main(int argc, char* argv[]) {
         sprintf(out_path, "./output/account%d.txt", i);
         strcpy(entry.out_file, out_path);
 
-        // TODO: must use pthread_mutex_destroy() when we call pthread_mutex_init()
-        // do we need to use it here, or will it be free'd when we free at the end?
         //--- init account mutex
         pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
         entry.ac_lock = mutex;
@@ -189,8 +187,6 @@ int main(int argc, char* argv[]) {
     threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
 
     // create worker threads
-    // FIXME: do i need to move int i; up here like he did in the video?
-    // int i;
     for (int i = 0; i < 10; i++) {
         // index calculation w 12k workload:
         // 0 * 12k = 0 -----> 11999
@@ -219,12 +215,7 @@ int main(int argc, char* argv[]) {
     }
 
     // TODO: implement bank thread!!
-
-    // process transactions one at a time (single threaded environment)
-    // for (int i = 0; i < num_transactions; i++) {
-    //     process_transaction(transactions + i);
-    // }
-
+    // will probably use a barrier here...
 
     // --------------------------------
 
@@ -237,7 +228,6 @@ int main(int argc, char* argv[]) {
     bad_pass: 20000
     bad_acct: 0
     total: 120000 */
-
 
     // TESTING: print # of transactions, etc
     printf("\nSTATS:\n");
@@ -295,17 +285,11 @@ void * process_transaction(void * arg) {
     // 1. iterate through the transaction array, starting point --> workload
     // 2. at each transaction, parse it and handle it as i have been below
 
-    // TODO: break statements should be okay as long as they dont break outer loop
-
-    // DEADLOCK SCENARIOS:
-    // 1. lock the same mutex twice (in the same thread)
-
     int start_index = *(int *)arg;
-    // printf("STARTING INDEX: %d\n", start_index);
 
     for (int i = 0; i < workload; i++) {
 
-        // printf("(%d) transaction %d: ", start_index, start_index + i);
+        // get current transaction to process
         command_line tran = transactions[start_index + i];
 
         // find requested account in account_array, store index
@@ -313,7 +297,7 @@ void * process_transaction(void * arg) {
         for (int i = 0; i < num_accounts; i++) {
             if (strcmp(account_array[i].account_number, tran.command_list[1]) == 0) {
                 account_index = i;
-                // break;
+                break;
             }
         }
 
@@ -322,8 +306,6 @@ void * process_transaction(void * arg) {
             printf("ACCOUNT %s NOT FOUND!!\n", tran.command_list[1]);
             bad_acct++;
             continue;
-
-            // return arg;
         }
 
         // now that we have the account, check the password
@@ -331,8 +313,6 @@ void * process_transaction(void * arg) {
             printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
             bad_pass++;
             continue;
-
-            // return arg;
         }
 
         // if passwords match, handle transaction:
@@ -347,14 +327,13 @@ void * process_transaction(void * arg) {
             for (int i = 0; i < num_accounts; i++) {
                 if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
                     dest_index = i;
-                    // break;
+                    break;
                 }
             }
 
             // make sure we found the dest account
             if (dest_index == -1) {
                 printf("DEST ACCOUNT NOT FOUND: %s\n", tran.command_list[3]);
-                // return arg;
                 continue;
             }
 
@@ -390,13 +369,14 @@ void * process_transaction(void * arg) {
         if (strcmp(tran.command_list[0], "C") == 0) {
 
             // NOTE: Dewi said we can just do nothing here...
+            
             // locking here because we dont want to print the wrong balance
             // while another thread is changing it
             pthread_mutex_lock(&account_array[account_index].ac_lock);
 
             // print terminal output
             printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
-            
+
             checks++;
 
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
@@ -446,13 +426,9 @@ void * process_transaction(void * arg) {
 
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
-
-        // return arg;
     }
 
-    // return arg;
     free(arg);
-    
 }
 
 
@@ -485,7 +461,7 @@ void * update_balance() {
         fclose(out_fp);
     }
     
-    // increment update counter
+    // increment, return update counter
     balance_updates++;
     return &balance_updates;
 }
