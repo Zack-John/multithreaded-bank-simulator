@@ -42,6 +42,7 @@ int num_accounts = 0;
 int balance_updates = 0;
 
 account * account_array;
+command_line * transactions;
 
 
 void * process_transaction(void * arg);
@@ -165,7 +166,8 @@ int main(int argc, char* argv[]) {
     }
 
     // init transaction array
-    command_line transactions[num_transactions];
+    // command_line transactions[num_transactions];
+    transactions = (command_line *)malloc(sizeof(command_line) * num_transactions);
 
     // return to top of transactions
     fseek(fp, pos, SEEK_SET);
@@ -184,9 +186,11 @@ int main(int argc, char* argv[]) {
 
     // init thread array
     pthread_t * threads;
-    threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);       // TODO: FREE ME!
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
 
     // create worker threads
+    // FIXME: do i need to move int i; up here like he did in the video?
+    // int i;
     for (int i = 0; i < 10; i++) {
         // index calculation w 12k workload:
         // 0 * 12k = 0 -----> 11999
@@ -195,14 +199,20 @@ int main(int argc, char* argv[]) {
         // ...
         // 9 * 12k = 108k ---> 119999
 
-        printf("thread %d should start at index %d!\n", i, (i * workload));
+        int * idx = malloc(sizeof(int));
+        *idx = (i * workload);
 
-        if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
+        // printf("thread %d should start at index %d!\n", i, workload * i);
+        printf("thread %d should start at index %d!\n", i, *idx);
+
+        // if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
+        if (pthread_create(threads + i, NULL, &process_transaction, idx) != 0 ) {
             perror("failed to create thread");
             return 1;
         }
     }
 
+    // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
         pthread_join(threads[i], NULL);
     }
@@ -210,7 +220,7 @@ int main(int argc, char* argv[]) {
     // TODO: implement bank thread!!
 
     // process transactions one at a time (single threaded environment)
-    // for (int i = 0; i < 10; i++) {
+    // for (int i = 0; i < num_transactions; i++) {
     //     process_transaction(transactions + i);
     // }
 
@@ -251,6 +261,8 @@ int main(int argc, char* argv[]) {
         free_command_line(&transactions[i]);
     }
 
+    free(transactions);
+
     return 0;
 }
 
@@ -272,144 +284,158 @@ void * process_transaction(void * arg) {
     // 1. iterate through the transaction array, starting point --> workload
     // 2. at each transaction, parse it and handle it as i have been below
 
-    // deref arg (transactions + (i * workload))
-    command_line tran = *(command_line *)arg;
+    int start_index = *(int *)arg;
+    printf("STARTING INDEX: %d\n", start_index);
 
-    // find requested account in account_array, store index
-    int account_index = -1;
-    for (int i = 0; i < num_accounts; i++) {
-        if (strcmp(account_array[i].account_number, tran.command_list[1]) == 0) {
-            account_index = i;
-            break;
-        }
+    for (int i = 0; i < workload; i++) {
+
+        printf("(%d) thread working on transaction # %d\n", start_index, start_index + i);
+        // command_line tran = transactions[start_index + i];
     }
 
-    // make sure we found the account
-    if (account_index == -1) {
-        printf("ACCOUNT %s NOT FOUND!!\n", tran.command_list[1]);
-        bad_acct++;
-        return arg;
-    }
+    // // deref arg (transactions + (i * workload))
+    // command_line tran = *(command_line *)arg;
 
-    // now that we have the account, check the password
-    if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
-        printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
-        bad_pass++;
-        return arg;
-    }
+    // // deref arg (idx = (i * workload))
+    // // int id = *(int *)arg;
 
-    // if passwords match, handle transaction:
+    // // find requested account in account_array, store index
+    // int account_index = -1;
+    // for (int i = 0; i < num_accounts; i++) {
+    //     if (strcmp(account_array[i].account_number, tran.command_list[1]) == 0) {
+    //         account_index = i;
+    //         break;
+    //     }
+    // }
 
-    /* TRANSFER */
-    if (strcmp(tran.command_list[0], "T") == 0) {
+    // // make sure we found the account
+    // if (account_index == -1) {
+    //     printf("ACCOUNT %s NOT FOUND!!\n", tran.command_list[1]);
+    //     bad_acct++;
+    //     return arg;
+    // }
+
+    // // now that we have the account, check the password
+    // if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
+    //     printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
+    //     bad_pass++;
+    //     return arg;
+    // }
+
+    // // if passwords match, handle transaction:
+
+    // /* TRANSFER */
+    // if (strcmp(tran.command_list[0], "T") == 0) {
 
 
-        // get dest account
-        int dest_index = -1;
-        for (int i = 0; i < num_accounts; i++) {
-            if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
-                dest_index = i;
-                break;
-            }
-        }
+    //     // get dest account
+    //     int dest_index = -1;
+    //     for (int i = 0; i < num_accounts; i++) {
+    //         if (strcmp(account_array[i].account_number, tran.command_list[3]) == 0) {
+    //             dest_index = i;
+    //             break;
+    //         }
+    //     }
 
-        // make sure we found the dest account
-        if (dest_index == -1) {
-            printf("DEST ACCOUNT NOT FOUND: %s\n", tran.command_list[3]);
-            return arg;
-        }
+    //     // make sure we found the dest account
+    //     if (dest_index == -1) {
+    //         printf("DEST ACCOUNT NOT FOUND: %s\n", tran.command_list[3]);
+    //         return arg;
+    //     }
 
-        // get value of transfer
-        double val = atof(tran.command_list[4]);
+    //     // get value of transfer
+    //     double val = atof(tran.command_list[4]);
 
-        // print terminal output
-        printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
+    //     // print terminal output
+    //     printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
 
-        // lock source account mutex
-        pthread_mutex_lock(&account_array[account_index].ac_lock);
+    //     // lock source account mutex
+    //     pthread_mutex_lock(&account_array[account_index].ac_lock);
 
-        // lock dest account mutex
-        pthread_mutex_lock(&account_array[dest_index].ac_lock);
+    //     // lock dest account mutex
+    //     pthread_mutex_lock(&account_array[dest_index].ac_lock);
 
-        // ----------- CRITICAL SECTION ------------
-        // sending account: remove val from balance
-        account_array[account_index].balance -= val;
+    //     // ----------- CRITICAL SECTION ------------
+    //     // sending account: remove val from balance
+    //     account_array[account_index].balance -= val;
 
-        // sending account: add val to rewards tracker
-        account_array[account_index].transaction_tracker += val;
+    //     // sending account: add val to rewards tracker
+    //     account_array[account_index].transaction_tracker += val;
 
-        // receiving account: add val to balance
-        account_array[dest_index].balance += val;
+    //     // receiving account: add val to balance
+    //     account_array[dest_index].balance += val;
 
-        transfers++;
-        // ------------------------------------------
+    //     transfers++;
+    //     // ------------------------------------------
 
-        // unlock src and dest locks
-        pthread_mutex_unlock(&account_array[account_index].ac_lock);
-        pthread_mutex_unlock(&account_array[dest_index].ac_lock);
-    }
+    //     // unlock src and dest locks
+    //     pthread_mutex_unlock(&account_array[account_index].ac_lock);
+    //     pthread_mutex_unlock(&account_array[dest_index].ac_lock);
+    // }
 
-    /* CHECK BALANCE */
-    if (strcmp(tran.command_list[0], "C") == 0) {
+    // /* CHECK BALANCE */
+    // if (strcmp(tran.command_list[0], "C") == 0) {
         
-        // locking here because we dont want to print the wrong balance
-        // while another thread is changing it
-        pthread_mutex_lock(&account_array[account_index].ac_lock);
+    //     // locking here because we dont want to print the wrong balance
+    //     // while another thread is changing it
+    //     pthread_mutex_lock(&account_array[account_index].ac_lock);
 
-        // print terminal output
-        printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
+    //     // print terminal output
+    //     printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
 
-        checks++;
+    //     checks++;
 
-        pthread_mutex_unlock(&account_array[account_index].ac_lock);
+    //     pthread_mutex_unlock(&account_array[account_index].ac_lock);
 
-    }
+    // }
 
-    /* DEPOSIT */
-    if (strcmp(tran.command_list[0], "D") == 0) {
+    // /* DEPOSIT */
+    // if (strcmp(tran.command_list[0], "D") == 0) {
 
-        // get the deposit amount
-        double val = atof(tran.command_list[3]);
+    //     // get the deposit amount
+    //     double val = atof(tran.command_list[3]);
 
-        // print terminal output
-        printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
+    //     // print terminal output
+    //     printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
 
-        pthread_mutex_lock(&account_array[account_index].ac_lock);
+    //     pthread_mutex_lock(&account_array[account_index].ac_lock);
 
-        // add the deposited amount to balance
-        account_array[account_index].balance += val;
+    //     // add the deposited amount to balance
+    //     account_array[account_index].balance += val;
 
-        // adjust reward tracker value
-        account_array[account_index].transaction_tracker += val;
+    //     // adjust reward tracker value
+    //     account_array[account_index].transaction_tracker += val;
         
-        deposits++;
+    //     deposits++;
 
-        pthread_mutex_unlock(&account_array[account_index].ac_lock);
-    }
+    //     pthread_mutex_unlock(&account_array[account_index].ac_lock);
+    // }
 
-    /* WITHDRAW */
-    if (strcmp(tran.command_list[0], "W") == 0) {
+    // /* WITHDRAW */
+    // if (strcmp(tran.command_list[0], "W") == 0) {
 
-        // get the withdraw amount
-        double val = atof(tran.command_list[3]);
+    //     // get the withdraw amount
+    //     double val = atof(tran.command_list[3]);
 
-        pthread_mutex_lock(&account_array[account_index].ac_lock);
+    //     pthread_mutex_lock(&account_array[account_index].ac_lock);
 
-        // print terminal output
-        printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
+    //     // print terminal output
+    //     printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
 
-        // remove the withdrawn amount from balance
-        account_array[account_index].balance -= val;
+    //     // remove the withdrawn amount from balance
+    //     account_array[account_index].balance -= val;
 
-        // adjust reward tracker value
-        account_array[account_index].transaction_tracker += val;
+    //     // adjust reward tracker value
+    //     account_array[account_index].transaction_tracker += val;
 
-        withdraws++;
+    //     withdraws++;
 
-        pthread_mutex_unlock(&account_array[account_index].ac_lock);
-    }
+    //     pthread_mutex_unlock(&account_array[account_index].ac_lock);
+    // }
 
-    return arg;
+    // // TODO: free arg (the index passed to this fxn)
+
+    // return arg;
 }
 
 
