@@ -37,13 +37,14 @@ int deposits = 0;
 int bad_pass = 0;
 int bad_acct = 0;
 
+int workload = 0;
 int num_accounts = 0;
 int balance_updates = 0;
 
 account * account_array;
 
 
-void * process_transaction(command_line * arg);
+void * process_transaction(void * arg);
 void * update_balance();
 
 
@@ -124,22 +125,25 @@ int main(int argc, char* argv[]) {
         entry.reward_rate = atof(token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
-        //--- transaction tracker starts at 0
+        //--- init transaction tracker 
         entry.transaction_tracker = 0.00;
 
-        //--- init out_file path
+        //--- init out_file
         char out_path[64];
         sprintf(out_path, "./output/account%d.txt", i);
         strcpy(entry.out_file, out_path);
 
-        // write initial balance to file
+        // TODO: must use pthread_mutex_destroy() when we call pthread_mutex_init()
+        // do we need to use it here, or will it be free'd when we free at the end?
+        //--- init account mutex
+        pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+        entry.ac_lock = mutex;
 
         // store the new entry in the array
         account_array[i] = entry;
     }
 
     // init output files
-    // try with single / multiple file pointers if issues arise
     for (int i = 0; i < num_accounts; i++) {
         FILE * fp2 = fopen(account_array[i].out_file, "w");
         if (fp2 == NULL) {
@@ -150,8 +154,6 @@ int main(int argc, char* argv[]) {
         fprintf(fp2, "account: %d\n", i);
         fclose(fp2);
     }
-
-    // printf("FILE INIT LOOP COMPLETE\n");
 
     // get current position in the file
     long int pos = ftell(fp);
@@ -168,7 +170,6 @@ int main(int argc, char* argv[]) {
     // return to top of transactions
     fseek(fp, pos, SEEK_SET);
 
-    /* GET TRANSACTION INFO */
     // tokenize transactions, store in array
     for (int i = 0; i < num_transactions; i++) {
         getline(&line_buf, &len, fp);
@@ -176,11 +177,46 @@ int main(int argc, char* argv[]) {
         transactions[i] = token_buffer;
     }
 
-    // process transactions one at a time (single threaded environment)
-    for (int i = 0; i < num_transactions; i++) {                  // FIXME: num_transactions / set amt for debugging
-        // printf("transaction #%d: ", i);
-        process_transaction(transactions + i);
+    // get number of transactions for each thread
+    // ("evenly slice the number of transactions")
+    workload = (num_transactions / 10);
+    printf("workload: %d\n", workload);
+
+    // init thread array
+    pthread_t * threads;
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);       // TODO: FREE ME!
+
+    // create worker threads
+    for (int i = 0; i < 10; i++) {
+        // index calculation w 12k workload:
+        // 0 * 12k = 0 -----> 11999
+        // 1 * 12k = 12k ---> 23999
+        // 2 * 12k = 24k ---> 35999
+        // ...
+        // 9 * 12k = 108k ---> 119999
+
+        printf("thread %d should start at index %d!\n", i, (i * workload));
+
+        if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
+            perror("failed to create thread");
+            return 1;
+        }
     }
+
+    for (int i = 0; i < 10; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    // TODO: implement bank thread!!
+
+    // process transactions one at a time (single threaded environment)
+    // for (int i = 0; i < 10; i++) {
+    //     process_transaction(transactions + i);
+    // }
+
+
+    // --------------------------------
+
 
     // TESTING: print # of transactions, etc
     printf("\nSTATS:\n");
@@ -194,11 +230,12 @@ int main(int argc, char* argv[]) {
 
     // calculate rewards
     int * out = update_balance(account_array);
-    printf("Total balance updates: %d\n", *out);
+    printf("Total balance updates: %d\n\n", *out);
 
     // write out final balances to output.txt
     FILE * outfp = fopen("output.txt", "w");
     for (int i = 0; i < num_accounts; i++) {
+        printf("%d balance:\t%.2f\n\n", i, account_array[i].balance);           // TODO: remove this line
         fprintf(outfp, "%d balance:\t%.2f\n\n", i, account_array[i].balance);
     }
 
@@ -208,6 +245,7 @@ int main(int argc, char* argv[]) {
 
     free(line_buf);
     free(account_array);
+    free(threads);
 
     for (int i = 0; i < num_transactions; i++) {
         free_command_line(&transactions[i]);
@@ -219,7 +257,7 @@ int main(int argc, char* argv[]) {
 
 
 
-void * process_transaction(command_line * arg) {
+void * process_transaction(void * arg) {
     /* TRANSACTION FORMATS */
     //------------- 0       1       2           3               4
     // transfers:   T src_account password dest_account transfer_amount
@@ -227,7 +265,14 @@ void * process_transaction(command_line * arg) {
     // deposit:     D account_num password amount
     // withdraw:    W account_num password amount
 
-    // deref arg (transactions + i)
+    // --------------- PART 2 -------------------
+    // now that we're inside process_transaction(), we need each thread
+    // to do its fair shair of the transactions, stored in 'workload'
+    // so we have to:
+    // 1. iterate through the transaction array, starting point --> workload
+    // 2. at each transaction, parse it and handle it as i have been below
+
+    // deref arg (transactions + (i * workload))
     command_line tran = *(command_line *)arg;
 
     // find requested account in account_array, store index
@@ -255,17 +300,9 @@ void * process_transaction(command_line * arg) {
 
     // if passwords match, handle transaction:
 
-    // open SRC output file (in append mode!)
-    // FILE * src_fp = fopen(account_array[account_index].out_file, "a");
-    // if (src_fp == NULL) {
-    //     perror("Failed to open SOURCE output file");
-    //     return arg;
-    // }
-
     /* TRANSFER */
     if (strcmp(tran.command_list[0], "T") == 0) {
 
-        transfers++;
 
         // get dest account
         int dest_index = -1;
@@ -285,9 +322,16 @@ void * process_transaction(command_line * arg) {
         // get value of transfer
         double val = atof(tran.command_list[4]);
 
-        // terminal output
+        // print terminal output
         printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
 
+        // lock source account mutex
+        pthread_mutex_lock(&account_array[account_index].ac_lock);
+
+        // lock dest account mutex
+        pthread_mutex_lock(&account_array[dest_index].ac_lock);
+
+        // ----------- CRITICAL SECTION ------------
         // sending account: remove val from balance
         account_array[account_index].balance -= val;
 
@@ -297,71 +341,61 @@ void * process_transaction(command_line * arg) {
         // receiving account: add val to balance
         account_array[dest_index].balance += val;
 
-        // write out new balance for SOURCE
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
+        transfers++;
+        // ------------------------------------------
 
-        // immediately close SRC fp
-        // fclose(src_fp);
-
-        // open DEST output file (in append mode!)
-        // FILE * dest_fp = fopen(account_array[dest_index].out_file, "a");
-        // if (dest_fp == NULL) {
-        //     perror("Failed to open DESTINATION output file");
-        //     return arg;
-        // }
-
-        // write out new balance for DEST
-        // fprintf(dest_fp, "Current Balance:\t%.2f\n", account_array[dest_index].balance);
-
-        // immediately close DEST fp
-        // fclose(dest_fp);
+        // unlock src and dest locks
+        pthread_mutex_unlock(&account_array[account_index].ac_lock);
+        pthread_mutex_unlock(&account_array[dest_index].ac_lock);
     }
 
     /* CHECK BALANCE */
     if (strcmp(tran.command_list[0], "C") == 0) {
         
-        checks++;
+        // locking here because we dont want to print the wrong balance
+        // while another thread is changing it
+        pthread_mutex_lock(&account_array[account_index].ac_lock);
 
+        // print terminal output
         printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
 
-        // write out balance to output file
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
+        checks++;
 
-        // close fp
-        // fclose(src_fp);
+        pthread_mutex_unlock(&account_array[account_index].ac_lock);
+
     }
 
     /* DEPOSIT */
     if (strcmp(tran.command_list[0], "D") == 0) {
 
-        deposits++;
-
         // get the deposit amount
         double val = atof(tran.command_list[3]);
 
+        // print terminal output
         printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
+
+        pthread_mutex_lock(&account_array[account_index].ac_lock);
 
         // add the deposited amount to balance
         account_array[account_index].balance += val;
 
         // adjust reward tracker value
         account_array[account_index].transaction_tracker += val;
+        
+        deposits++;
 
-        // write out new balance to output file
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // close fp
-        // fclose(src_fp);
+        pthread_mutex_unlock(&account_array[account_index].ac_lock);
     }
 
     /* WITHDRAW */
     if (strcmp(tran.command_list[0], "W") == 0) {
 
-        withdraws++;
-
         // get the withdraw amount
         double val = atof(tran.command_list[3]);
 
+        pthread_mutex_lock(&account_array[account_index].ac_lock);
+
+        // print terminal output
         printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
 
         // remove the withdrawn amount from balance
@@ -370,12 +404,9 @@ void * process_transaction(command_line * arg) {
         // adjust reward tracker value
         account_array[account_index].transaction_tracker += val;
 
+        withdraws++;
 
-        // write out new balance
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // close fp
-        // fclose(src_fp);
+        pthread_mutex_unlock(&account_array[account_index].ac_lock);
     }
 
     return arg;
