@@ -14,23 +14,34 @@
 
 
 /* ---------- P A R T  3 ----------*/
-// TODO: REMARKS:
+
+// RUBRIC:
+// 10 points:
+// correct answer is reached and account#.txt is different every run,
+// however account#.txt should have the same number of lines every run
+
+// 15 points:
+// correct usage of pthread_barrier_wait
+
+// 10 points:
+// program does not deadlock
+
+// 15 points:
+// correct usage of pthread_cond_wait and pthread_cond_broadcast / signal
+
+
+// REMARKS:
 // "RACE CONDITIONS WILL PLAY A HUGE ROLE IN PART 3"
 
 // AN IMPORTANT QUESTION YOU SHUOLD ASK YOURSELF IS:
 // "HOW DO YOU MAKE SURE ONE THREAD WILL REACH A CERTAIN PART
 // OF THE CODE BEFORE ANOTHER?"
 
-// DEADLOCKS COULD MAKE YOUR PROGRAM STUC, AND IT IS
+// DEADLOCKS COULD MAKE YOUR PROGRAM STUCK, AND IT IS
 // EXTREMELY DIFFICULT TO FIGURE OUT EXACTLY WHAT HAPPEND
 // AND HOW TO RESOLVE IT. THINK ABOUT WHAT VARIABLES YOU
 // COULD KEEP TRACK OF TO SIGNAL A DEADLOCK!
 /* --------------------------------*/
-
-
-// "signal is generally used when you expect only one thread needs to start working,
-// you use broadcast when theres a possibility that the work requires more than one thread"
-// (so will probably want to use signal to communicate with bank thread and broadcast for workers)
 
 
 // TESTING: used to track # of transactions, etc
@@ -198,6 +209,16 @@ int main(int argc, char* argv[]) {
     pthread_t * threads;
     threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
 
+    // TODO: "no thread can start processing the requests before all threads are created and given a signal by main"
+
+    // TODO: when the number of requests processed (excluding checking balance and invalid requests!!) across 
+    // all threads reaches 5000,all threads have to pause and notify the bank thread to wake up and update the
+    // balance of each account balance.
+
+    // TODO: when the bank is done updating the balances, it will append each account's balance to output files
+    // name after each account number (act_#.txt). the bank thread will then tell all other threads to continue
+    // processing before going back to a waiting state ready for the next round of updates
+
     // create bank thread
     if (pthread_create(&bank_thread, NULL, &update_balance, NULL) != 0 ) {
             perror("FAILED TO CREATE BANK THREAD");
@@ -240,26 +261,6 @@ int main(int argc, char* argv[]) {
 
     // --------------------------------
 
-    /* expected:
-    STATS:
-    transfers: 50000
-    checks: 10000
-    deposits: 20000
-    withdraws: 20000
-    bad_pass: 20000
-    bad_acct: 0
-    total: 120000 */
-
-    // TESTING: print # of transactions, etc
-    // printf("\nSTATS:\n");
-    // printf("transfers: %d\n", transfers);
-    // printf("checks: %d\n", checks);
-    // printf("deposits: %d\n", deposits);
-    // printf("withdraws: %d\n", withdraws);
-    // printf("bad_pass: %d\n", bad_pass);
-    // printf("bad_acct: %d\n", bad_acct);
-    // printf("total: %d\n\n", (transfers + checks + deposits + withdraws + bad_pass));
-
     // calculate rewards
     // int * out = update_balance(account_array);
     printf("Total balance updates: %d\n\n", *out);
@@ -285,7 +286,6 @@ int main(int argc, char* argv[]) {
 
     free(transactions);
 
-    // FIXME: commenting these lines doesnt cause any issues in valgrind... unneccesary?
     // pthread_cond_destroy(&bankCond);
     // pthread_mutex_destroy(&bankMutex);
 
@@ -301,12 +301,10 @@ void * process_transaction(void * arg) {
     // deposit:     D account_num password amount
     // withdraw:    W account_num password amount
 
-    // --------------- PART 2 -------------------
-    // now that we're inside process_transaction(), we need each thread
-    // to do its fair shair of the transactions, stored in 'workload'
-    // so we have to:
-    // 1. iterate through the transaction array, starting point --> workload
-    // 2. at each transaction, parse it and handle it as i have been below
+    // --------------- PART 3 -------------------
+
+    // TODO: add waiting functionality here, so that no thread starts
+    // processing until they're all created and given the start signal
 
     int start_index = *(int *)arg;
 
@@ -435,6 +433,8 @@ void * process_transaction(void * arg) {
 
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
+
+        // TODO: increment transaction tracker here (for bank thread)
     }
 
     // ONCE ALL TRANSACTIONS IN THIS THREADS WORKLOAD HAVE BEEN PROCESSED...
@@ -461,11 +461,7 @@ void * update_balance() {
     /* this function will return the number
     of times it had to update each account */
 
-    // wait until a thread signals that its done
-    // check if num_threads_done == 10
-    // if not, go back to waiting
-    // if yes, update balance and exit
-    // [could probably use a barrier here too]
+    // TODO: wait until 5000 transactions are completed, then update balance
 
     // MUST LOCK MUTEX BEFORE WAITING
     pthread_mutex_lock(&bankMutex);
