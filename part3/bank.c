@@ -3,6 +3,7 @@
 #include <string.h>
 #include <pthread.h>
 
+
 #include <errno.h>
 
 #include <sys/types.h>
@@ -58,12 +59,18 @@ int num_accounts = 0;
 int balance_updates = 0;
 
 int threads_done = 0;
-pthread_mutex_t bankMutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t bankCond = PTHREAD_COND_INITIALIZER;
+
+pthread_mutex_t bank_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+pthread_cond_t bank_cond = PTHREAD_COND_INITIALIZER;
+
+pthread_barrier_t start_barrier; // NOTE: changed c standard from c17 -> gnu99 to get this to recognize
 
 account * account_array;
 command_line * transactions;
 
+int num_processed = 0;
 
 void * process_transaction(void * arg);
 void * update_balance();
@@ -202,22 +209,15 @@ int main(int argc, char* argv[]) {
     workload = (num_transactions / 10);
     // printf("workload: %d\n", workload);
 
+    // init barrier
+    pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
+
     // init bank thread
     pthread_t bank_thread;
 
     // init thread array
     pthread_t * threads;
     threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
-
-    // TODO: "no thread can start processing the requests before all threads are created and given a signal by main"
-
-    // TODO: when the number of requests processed (excluding checking balance and invalid requests!!) across 
-    // all threads reaches 5000,all threads have to pause and notify the bank thread to wake up and update the
-    // balance of each account balance.
-
-    // TODO: when the bank is done updating the balances, it will append each account's balance to output files
-    // name after each account number (act_#.txt). the bank thread will then tell all other threads to continue
-    // processing before going back to a waiting state ready for the next round of updates
 
     // create bank thread
     if (pthread_create(&bank_thread, NULL, &update_balance, NULL) != 0 ) {
@@ -247,10 +247,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // wait here until all threads are created and ready to run
+    printf("main program waiting at start barrier...\n");
+    pthread_barrier_wait(&start_barrier);
+
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
         pthread_join(threads[i], NULL);
-        printf("[join loop] thread %d finished!\n", i);
+        printf("[main] thread %d finished!\n", i);
     }
 
     printf("[main] all workers done!\n");
@@ -303,8 +307,16 @@ void * process_transaction(void * arg) {
 
     // --------------- PART 3 -------------------
 
-    // TODO: add waiting functionality here, so that no thread starts
-    // processing until they're all created and given the start signal
+    // TODO: increment transaction tracker after each transaction
+    // EXCEPT FOR CHECK BALANCE AND INVALID REQUESTS !!
+
+    // TODO: when the number of requests processed (excluding checking balance and invalid requests!) across 
+    // all threads reaches 5000, all threads have to pause and notify the bank thread to wake up and update the
+    // balance of each account balance.
+
+    // wait until all threads are created to start processing
+    printf("worker waiting at start barrier...\n");
+    pthread_barrier_wait(&start_barrier);
 
     int start_index = *(int *)arg;
 
@@ -383,17 +395,8 @@ void * process_transaction(void * arg) {
 
         /* CHECK BALANCE */
         if (strcmp(tran.command_list[0], "C") == 0) {
-
             // NOTE: Dewi said we can just do nothing here...
-            
-            // locking here because we dont want to print the wrong balance
-            // while another thread is changing it
-            pthread_mutex_lock(&account_array[account_index].ac_lock);
-
-            // printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
-
-            pthread_mutex_unlock(&account_array[account_index].ac_lock);
-
+            continue;
         }
 
         /* DEPOSIT */
@@ -434,23 +437,39 @@ void * process_transaction(void * arg) {
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
 
-        // TODO: increment transaction tracker here (for bank thread)
+        // lock tracker mutex
+        pthread_mutex_lock(&tracker_mutex);
+
+        // increment tracker
+        num_processed++;
+
+        // if we are transaction # 5000...
+        if (num_processed == 5000) {
+
+            // signal bank thread to update balances
+            // reset tracker to 0 (in bank thread probably)
+        }
+
+        // release tracker mutex
+        pthread_mutex_unlock(&tracker_mutex);
+
+
     }
 
     // ONCE ALL TRANSACTIONS IN THIS THREADS WORKLOAD HAVE BEEN PROCESSED...
 
     // lock the bank mutex
-    pthread_mutex_lock(&bankMutex);
+    pthread_mutex_lock(&bank_mutex);
 
     // increment threads_done
     threads_done++;
     printf("threads_done is now %d\n", threads_done);
 
     // unlock the bank mutex
-    pthread_mutex_unlock(&bankMutex);
+    pthread_mutex_unlock(&bank_mutex);
 
     // signal that we're done (for bank thread to check how many are now done)
-    pthread_cond_signal(&bankCond);
+    pthread_cond_signal(&bank_cond);
     
     free(arg);
 }
@@ -463,8 +482,12 @@ void * update_balance() {
 
     // TODO: wait until 5000 transactions are completed, then update balance
 
+    // TODO: when the bank is done updating the balances, it will append each account's balance to output files
+    // name after each account number (act_#.txt). the bank thread will then tell all other threads to continue
+    // processing before going back to a waiting state ready for the next round of updates
+
     // MUST LOCK MUTEX BEFORE WAITING
-    pthread_mutex_lock(&bankMutex);
+    pthread_mutex_lock(&bank_mutex);
 
     while (threads_done < 10) {
 
@@ -472,7 +495,7 @@ void * update_balance() {
         printf("waiting for the next signal\n");
 
         // wait for signal that a thread completed
-        pthread_cond_wait(&bankCond, &bankMutex);
+        pthread_cond_wait(&bank_cond, &bank_mutex);
 
         // ^^^ pthread_cond_wait is the same as:
         // pthread_mutex_unlock(bankMutex)
@@ -507,7 +530,7 @@ void * update_balance() {
     }
 
     // DONT FORGET TO UNLOCK THE MUTEX WHEN WE'RE DONE
-    pthread_mutex_unlock(&bankMutex);
+    pthread_mutex_unlock(&bank_mutex);
     
     // increment, return update counter
     balance_updates++;
