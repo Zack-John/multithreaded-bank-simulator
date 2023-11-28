@@ -65,15 +65,13 @@ int transaction_counter = 0;
 pthread_mutex_t bank_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t bank_cond = PTHREAD_COND_INITIALIZER;
 
-pthread_barrier_t start_barrier; // NOTE: changed c standard from c17 -> gnu99 to get this to recognize
+pthread_barrier_t start_barrier; // c17 -> gnu99
 
 pthread_mutex_t update_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 pthread_cond_t update_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t update_done_cond = PTHREAD_COND_INITIALIZER;
-
-pthread_barrier_t update_barrier;
 
 account * account_array;
 command_line * transactions;
@@ -217,11 +215,9 @@ int main(int argc, char* argv[]) {
     // get number of transactions for each thread
     // ("evenly slice the number of transactions")
     workload = (num_transactions / 10);
-    // printf("workload: %d\n", workload);
 
     // init barriers
     pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
-    pthread_barrier_init(&update_barrier, NULL, 10);// 10 workers
 
     // init bank thread
     pthread_t bank_thread;
@@ -259,7 +255,6 @@ int main(int argc, char* argv[]) {
     }
 
     // wait here until all threads are created and ready to run
-    // printf("main program waiting at start barrier...\n");
     pthread_barrier_wait(&start_barrier);
 
     // wait for worker threads to finish
@@ -270,18 +265,15 @@ int main(int argc, char* argv[]) {
 
     printf("[main] all workers done!\n");
 
-    // send bank thread a signal to let it know
-    // all our worker threads are finished
+    // all our worker threads are finished,
+    // send bank thread a signal to wake it
     pthread_cond_signal(&update_cond);
 
     // wait for bank thread to finish    
     int * out;
     pthread_join(bank_thread, (void **)&out);
 
-    // --------------------------------
-
-    // calculate rewards
-    // int * out = update_balance(account_array);
+    // print total number of updates
     printf("Total balance updates: %d\n", *out);
 
     // write out final balances to output.txt
@@ -320,7 +312,6 @@ void * process_transaction(void * arg) {
     // --------------- PART 3 -------------------
 
     // wait until all threads are created to start processing
-    // printf("worker waiting at start barrier...\n");
     pthread_barrier_wait(&start_barrier);
 
     int start_index = *(int *)arg;
@@ -353,35 +344,27 @@ void * process_transaction(void * arg) {
             continue;
         }
 
-        // IF EVERYTHING IS VALID, HANDLE TRANSACTION:
-
-        // TESTING: handle check balance before incrementing tracker (works)
-        /* CHECK BALANCE */
+        // if just checking balance, do nothing
         if (strcmp(tran.command_list[0], "C") == 0) {
             // NOTE: Dewi said we can just do nothing here...
             continue;
         }
 
-        // TESTING: incrementing counter before processing (works)
         // lock counter mutex
         pthread_mutex_lock(&counter_mutex);
 
         // increment tracker
         transaction_counter++;
 
-        // pthread_mutex_unlock(&counter_mutex);
-
-        // if this is # 5000, hold on to tracker mutex so other
+        // if this is #5000, hold on to tracker mutex so other
         // threads have to wait for it to continue processing
         if (transaction_counter == 5000) {
 
-            // printf("WE NEED TO UPDATE AFTER THIS TRANSACTION!\n");
-
-            // we need to update after we process this transaction
+            // we need to update after processing
             needs_update = 1;
         }
 
-        // if this isn't # 5000, unlock tracker mutex and continue
+        // if this isn't #5000, unlock tracker mutex and continue
         else {
             pthread_mutex_unlock(&counter_mutex);
         }
@@ -475,65 +458,44 @@ void * process_transaction(void * arg) {
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
 
-        // now that we've processed, if this was # 5000 we need to update
+        // if this was #5000 we need to update
         if (needs_update) {
 
             // lock update mutex
-            // printf("[update thread] transaction processed, locking update_mutex!\n");
             pthread_mutex_lock(&update_mutex);
             
             // signal bank thread for update
-            // printf("[update thread] signaling bank for update\n");
             pthread_cond_signal(&update_cond);
 
-            // wait for bank thread to finish update:
-            // FIXME:
-            // have an issue here where this thread and the bank thread
-            // get stuck waiting for the other's signal, so i have it
-            // time out after a second instead of using usleep(), etc
-            // (in case more accounts are used to test and it takes longer
-            // than the predetermined usleep time, even tho that worked too)
+            // wait for bank thread to finish update
+            // (timedwait for 1 second here to fix an occasional deadlock)
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 1;
 
-            // struct timespec ts;
-            // clock_gettime(CLOCK_REALTIME, &ts);
-            // ts.tv_sec += 1;
-
-            // int val = pthread_cond_timedwait(&update_done_cond, &update_mutex, &ts);
-            // printf("val exited with code %d\n", val);
-
-            // TODO: THIS SET TO 5 FAILED ONCE IN 1000 TIMES
-            // should replace it with the timedwait() above for robustness
-            usleep(5);
+            pthread_cond_timedwait(&update_done_cond, &update_mutex, &ts);
 
             // reset tracker to 0
-            // printf("[update thread] resetting counter to 0\n");
             transaction_counter = 0;
 
             // unlock update mutex once bank is done updating
-            // printf("[update thread] unlocking update_mutex\n");
             pthread_mutex_unlock(&update_mutex);
 
             // finally, release the tracker mutex to let
-            // everyone else through again
-            // printf("[update thread] unlocking counter_mutex\n");
+            // everyone else through
             pthread_mutex_unlock(&counter_mutex);
         }
     }
 
-    // ONCE ALL TRANSACTIONS IN THIS THREADS WORKLOAD HAVE BEEN PROCESSED...
-
-    // printf("THREAD FINISHED!!\n");
+    // ONCE THIS THREADS WORKLOAD HAS BEEN PROCESSED...
 
     // lock the thread mutex
-    // printf("[thread exit] locking thread mutex\n");
     pthread_mutex_lock(&thread_mutex);
 
     // increment threads_done
     threads_done++;
-    // printf("[thread exit] thread finished workload; threads_done is now %d\n", threads_done);
 
     // unlock the thread mutex
-    // printf("[thread exit] unlocking thread mutex\n");
     pthread_mutex_unlock(&thread_mutex);
 
     // signal that we're done (for bank thread to check how many are now done)
@@ -547,7 +509,6 @@ void * process_transaction(void * arg) {
     
     free(arg);
 
-    // FIXME: testing
     // pthread_exit(0);
 }
 
@@ -557,29 +518,27 @@ void * update_balance() {
     /* this function will return the number
     of times it had to update each account */
 
-    // MUST LOCK MUTEX BEFORE WAITING
+    // must lock mutex before waiting
     pthread_mutex_lock(&bank_mutex);
 
     while (threads_done < 10) {
-
-        // printf("[bank] threads_done = %d... waiting for next signal\n", threads_done);
 
         // wait for signal that we need to update balances
         pthread_cond_wait(&update_cond, &bank_mutex);
 
         // ^^^ pthread_cond_wait is the same as:
-        // pthread_mutex_unlock(bankMutex)
-        // wait for signal on bankCond
-        // pthread_mutex_lock(bankMutex)
+        // pthread_mutex_unlock(bank_mutex)
+        // wait for signal on bank_cond
+        // pthread_mutex_lock(bank_mutex)
 
         if (threads_done < 10) {
-            // printf("[bank] updating accounts!\n");
 
-            // once we get the signal, update balances:
+            // update balances
             FILE * out_fp;
 
             for (int i = 0; i < num_accounts; i++) {
 
+                // lock account mutex
                 pthread_mutex_lock(&account_array[i].ac_lock);
 
                 // get reward value (tracker value * reward rate)
@@ -604,15 +563,12 @@ void * update_balance() {
                 // RESET TRACKER VALUE
                 account_array[i].transaction_tracker = 0;
 
+                // release account mutex
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
 
             balance_updates++;
-            // printf("[bank] updates complete, # balance updates: %d\n", balance_updates);
 
-            // send signal to waiting thread
-            // printf("[bank] sending update_done signal!\n");
-            // pthread_cond_signal(&update_done_cond);
             pthread_cond_broadcast(&update_done_cond);
         }
 
@@ -622,9 +578,7 @@ void * update_balance() {
 
     }
 
-    // printf("[bank] ALL THREADS ARE DONE!\n");
-
-    // DONT FORGET TO UNLOCK THE MUTEX WHEN WE'RE DONE
+    // unlock the bank mutex since we're done
     pthread_mutex_unlock(&bank_mutex);
     
     // return update counter
