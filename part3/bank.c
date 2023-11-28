@@ -509,7 +509,7 @@ void * process_transaction(void * arg) {
     
     free(arg);
 
-    // pthread_exit(0);
+    pthread_exit(0);
 }
 
 
