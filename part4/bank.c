@@ -95,9 +95,11 @@ int main(int argc, char* argv[]) {
     // if its an issue, use a hashmap
     account_array = (account *)malloc(sizeof(account) * num_accounts);
 
-    // TODO: create shared memory
-    int * shared_memory = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    // // create shared memory
+    // int * shared_memory = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+    //                             MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    
+    // printf("shared_memory: %p\n", shared_memory);
 
     for (int i = 0; i < num_accounts; i++) {
 
@@ -155,6 +157,28 @@ int main(int argc, char* argv[]) {
         account_array[i] = entry;
     }
 
+    // FIXME:
+
+    // create shared memory
+    account * shared_memory = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    
+    printf("shared_memory pointer: %p\n", shared_memory);
+    printf("sizeof(*shared_memory): %ld\n", sizeof(*shared_memory));
+    printf("sizeof(*account_array): %ld\n", sizeof(*account_array));
+
+    // copy accounts to shared memory
+    for (int i = 0; i < num_accounts; i++) {
+        shared_memory[i] = account_array[i];
+    }
+
+    // TESTING: print shared memory accounts
+    for (int i = 0; i < num_accounts; i++) {
+        printf("shared_memory[%d]: %s\n", i, shared_memory[i].account_number);
+    }
+
+    printf("copied account_array to shared_memory!\n");
+
     // init output files
     for (int i = 0; i < num_accounts; i++) {
         FILE * fp2 = fopen(account_array[i].out_file, "w");
@@ -177,7 +201,6 @@ int main(int argc, char* argv[]) {
     }
 
     // init transaction array
-    // command_line transactions[num_transactions];
     transactions = (command_line *)malloc(sizeof(command_line) * num_transactions);
 
     // return to top of transactions
@@ -194,7 +217,7 @@ int main(int argc, char* argv[]) {
     // ("evenly slice the number of transactions")
     workload = (num_transactions / 10);
 
-    // init barriers
+    // init barrier
     pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
 
     // init bank thread
@@ -487,7 +510,7 @@ void * process_transaction(void * arg) {
     
     free(arg);
 
-    // pthread_exit(0);
+    pthread_exit(0);
 }
 
 
