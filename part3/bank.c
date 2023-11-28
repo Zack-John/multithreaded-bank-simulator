@@ -316,7 +316,6 @@ void * process_transaction(void * arg) {
 
     // --------------- PART 3 -------------------
 
-
     // wait until all threads are created to start processing
     printf("worker waiting at start barrier...\n");
     pthread_barrier_wait(&start_barrier);
