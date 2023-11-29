@@ -253,7 +253,6 @@ int main(int argc, char* argv[]) {
         workload_manager * mgr = malloc(sizeof(workload_manager));
         mgr->workload = workload;
         mgr->thread_idx = i;
-        // mgr->thread_idx = (i * workload);
 
         if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
             perror("FAILED TO CREATE WORKER THREAD");
