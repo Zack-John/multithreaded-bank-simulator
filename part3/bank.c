@@ -17,20 +17,6 @@
 
 /* ---------- P A R T  3 ----------*/
 
-// RUBRIC:
-// 10 points:
-// correct answer is reached and account#.txt is different every run,
-// however account#.txt should have the same number of lines every run
-
-// 15 points:
-// correct usage of pthread_barrier_wait
-
-// 10 points:
-// program does not deadlock
-
-// 15 points:
-// correct usage of pthread_cond_wait and pthread_cond_broadcast / signal
-
 typedef struct workload_manager {
     int thread_idx;
     int workload;
@@ -50,15 +36,13 @@ pthread_barrier_t start_barrier; // c17 -> gnu99
 
 pthread_mutex_t update_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 pthread_cond_t update_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t update_done_cond = PTHREAD_COND_INITIALIZER;
 
 account * account_array;
 command_line * transactions;
-
-// TESTING
-pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 void * process_transaction(void * arg);
@@ -98,8 +82,7 @@ int main(int argc, char* argv[]) {
     getline(&line_buf, &len, fp);
     num_accounts = atoi(line_buf);
 
-    // NOTE: an array might be really slow here
-    // if its an issue, use a hashmap
+    // init account array
     account_array = (account *)malloc(sizeof(account) * num_accounts);
 
     for (int i = 0; i < num_accounts; i++) {
@@ -107,37 +90,29 @@ int main(int argc, char* argv[]) {
         // create struct
         account entry;
 
-        // NOTE: i dont think i technically need to remove the newlines below...
-        // i think i could just call it with empty delim arg for strings
-        // or skip it all together when doing atoi, atof, etc
-
         //--- line n: index number
         getline(&line_buf, &len, fp);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.account_number, token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
         //---  line n + 2: password (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.password, token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
         //--- line n + 3: initial balance (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        // sscanf(token_buffer.command_list[0], "%lf", &entry.balance);
-        entry.balance = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        token_buffer = str_filler(line_buf, "");
+        entry.balance = atof(line_buf);
 
         //--- line n + 4: reward rate (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        entry.reward_rate = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        entry.reward_rate = atof(line_buf);
 
         //--- init transaction tracker 
         entry.transaction_tracker = 0.00;
@@ -153,6 +128,9 @@ int main(int argc, char* argv[]) {
 
         // store the new entry in the array
         account_array[i] = entry;
+
+        // free token buffer
+        free_command_line(&token_buffer);
     }
 
     // init output files
@@ -235,8 +213,8 @@ int main(int argc, char* argv[]) {
 
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
-        int ex = pthread_join(threads[i], NULL);
-        printf("[main] thread %d finished with code %d!\n", i, ex);
+        pthread_join(threads[i], NULL);
+        printf("[main] thread %d finished!\n", i);
     }
 
     printf("[main] all workers done!\n");
@@ -255,7 +233,6 @@ int main(int argc, char* argv[]) {
     // write out final balances to output.txt
     FILE * outfp = fopen("output.txt", "w");
     for (int i = 0; i < num_accounts; i++) {
-        // printf("%d balance:\t%.2f\n\n", i, account_array[i].balance);           // TODO: remove this line when done
         fprintf(outfp, "%d balance:\t%.2f\n\n", i, account_array[i].balance);
     }
 
@@ -312,7 +289,6 @@ void * process_transaction(void * arg) {
 
         // now that we have the account, check the password
         if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
-            // printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
             continue;
         }
 
@@ -329,7 +305,7 @@ void * process_transaction(void * arg) {
         transaction_counter++;
 
         // if this is #5000, hold on to tracker mutex so other
-        // threads have to wait for it to continue processing
+        // threads wait before processing further
         if (transaction_counter == 5000) {
 
             // we need to update after processing
@@ -386,19 +362,11 @@ void * process_transaction(void * arg) {
             pthread_mutex_unlock(&account_array[dest_index].ac_lock);
         }
 
-        // /* CHECK BALANCE */
-        // if (strcmp(tran.command_list[0], "C") == 0) {
-        //     // NOTE: Dewi said we can just do nothing here...
-        //     continue;
-        // }
-
         /* DEPOSIT */
         if (strcmp(tran.command_list[0], "D") == 0) {
 
             // get the deposit amount
             double val = atof(tran.command_list[3]);
-
-            // printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
 
             pthread_mutex_lock(&account_array[account_index].ac_lock);
 
@@ -419,8 +387,6 @@ void * process_transaction(void * arg) {
 
             pthread_mutex_lock(&account_array[account_index].ac_lock);
 
-            // printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
-
             // remove the withdrawn amount from balance
             account_array[account_index].balance -= val;
 
@@ -440,7 +406,8 @@ void * process_transaction(void * arg) {
             pthread_cond_signal(&update_cond);
 
             // wait for bank thread to finish update
-            // (timedwait for 1 second here to fix an occasional deadlock)
+            // (timedwait here to fix an occasional race cond where
+            // bank and worker are waiting for each other's signal)
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += 1;
@@ -471,17 +438,14 @@ void * process_transaction(void * arg) {
     pthread_mutex_unlock(&thread_mutex);
 
     // signal that we're done (for bank thread to check how many are now done)
-    // pthread_cond_signal(&bank_cond);
 
-    // TESTING
     if (threads_done == 10) {
-        // printf("[thread exit] THIS IS THE LAST THREAD TO EXIT, SENDING ANOTHER UPDATE SIGNAL\n");
         pthread_cond_signal(&update_cond);
     }
     
     free(arg);
 
-    pthread_exit(0);
+    return NULL;
 }
 
 
@@ -498,11 +462,7 @@ void * update_balance() {
         // wait for signal that we need to update balances
         pthread_cond_wait(&update_cond, &bank_mutex);
 
-        // ^^^ pthread_cond_wait is the same as:
-        // pthread_mutex_unlock(bank_mutex)
-        // wait for signal on bank_cond
-        // pthread_mutex_lock(bank_mutex)
-
+        // if we still have threads working...
         if (threads_done < 10) {
 
             // update balances
@@ -543,11 +503,6 @@ void * update_balance() {
 
             pthread_cond_broadcast(&update_done_cond);
         }
-
-        else if (threads_done == 10) {
-            // printf("[bank] ALL THREADS DONE, SHOULD BE EXITING LOOP\n");
-        }
-
     }
 
     // unlock the bank mutex since we're done
