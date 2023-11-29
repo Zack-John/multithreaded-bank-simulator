@@ -69,8 +69,7 @@ int main(int argc, char* argv[]) {
     getline(&line_buf, &len, fp);
     num_accounts = atoi(line_buf);
 
-    // NOTE: an array might be really slow here
-    // if its an issue, use a hashmap
+    // init account array
     account_array = (account *)malloc(sizeof(account) * num_accounts);
 
     for (int i = 0; i < num_accounts; i++) {
@@ -78,37 +77,27 @@ int main(int argc, char* argv[]) {
         // create struct
         account entry;
 
-        // NOTE: i dont think i technically need to remove the newlines below...
-        // i think i could just call it with empty delim arg for strings
-        // or skip it all together when doing atoi, atof, etc
-
         //--- line n: index number
         getline(&line_buf, &len, fp);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.account_number, token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
         //---  line n + 2: password (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.password, token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
 
         //--- line n + 3: initial balance (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        // sscanf(token_buffer.command_list[0], "%lf", &entry.balance);
-        entry.balance = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        entry.balance = atof(line_buf);
 
         //--- line n + 4: reward rate (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        entry.reward_rate = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        entry.reward_rate = atof(line_buf);
 
         //--- init transaction tracker 
         entry.transaction_tracker = 0.00;
@@ -124,6 +113,9 @@ int main(int argc, char* argv[]) {
 
         // store the new entry in the array
         account_array[i] = entry;
+
+        // free token buffer
+        free_command_line(&token_buffer);
     }
 
     // init output files
@@ -204,7 +196,7 @@ int main(int argc, char* argv[]) {
         printf("[main] thread %d finished!\n", i);
     }
 
-    printf("[main] all workers done!\n");
+    printf("[main] all workers done!\n\n");
 
     // wait for bank thread to finish
     int * out;
@@ -213,12 +205,11 @@ int main(int argc, char* argv[]) {
     // --------------------------------
 
     // print balance updates
-    printf("Total balance updates: %d\n\n", *out);
+    printf("Total balance updates: %d\n", *out);
 
     // write out final balances to output.txt
     FILE * outfp = fopen("output.txt", "w");
     for (int i = 0; i < num_accounts; i++) {
-        printf("%d balance:\t%.2f\n\n", i, account_array[i].balance);           // TODO: remove this line when done
         fprintf(outfp, "%d balance:\t%.2f\n\n", i, account_array[i].balance);
     }
 
@@ -324,16 +315,9 @@ void * process_transaction(void * arg) {
         /* CHECK BALANCE */
         if (strcmp(tran.command_list[0], "C") == 0) {
 
-            // NOTE: Dewi said we can just do nothing here...
-            
-            // locking here because we dont want to print the wrong balance
-            // while another thread is changing it
             pthread_mutex_lock(&account_array[account_index].ac_lock);
-
             // printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
-
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
-
         }
 
         /* DEPOSIT */
@@ -391,7 +375,9 @@ void * process_transaction(void * arg) {
     
     free(arg);
 
-    pthread_exit(0);
+    // pthread_exit causes memleak here,
+    // returning NULL fixes it (bug?)
+    return NULL;
 }
 
 
@@ -407,14 +393,7 @@ void * update_balance() {
 
         // wait for signal that a thread completed
         pthread_cond_wait(&bankCond, &bankMutex);
-
-        // ^^^ pthread_cond_wait is the same as:
-        // pthread_mutex_unlock(bankMutex)
-        // wait for signal on bankCond
-        // pthread_mutex_lock(bankMutex)
     }
-
-    printf("All threads are done, updating balances!\n");
 
     FILE * out_fp;
 
@@ -440,7 +419,7 @@ void * update_balance() {
         fclose(out_fp);
     }
 
-    // DONT FORGET TO UNLOCK THE MUTEX WHEN WE'RE DONE
+    // unlock mutex when we're done
     pthread_mutex_unlock(&bankMutex);
     
     // increment, return update counter
