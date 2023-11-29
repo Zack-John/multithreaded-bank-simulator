@@ -16,6 +16,10 @@
 #include "account.h"
 
 
+typedef struct workload_manager {
+    int thread_idx;
+    int workload;
+} workload_manager;
 
 /* ---------- P A R T  4 ----------*/
 
@@ -245,11 +249,13 @@ int main(int argc, char* argv[]) {
     // create worker threads
     for (int i = 0; i < 10; i++) {
 
-        int * idx = malloc(sizeof(int));
-        *idx = (i * workload);
+        // init thread manager struct
+        workload_manager * mgr = malloc(sizeof(workload_manager));
+        mgr->workload = workload;
+        mgr->thread_idx = i;
+        // mgr->thread_idx = (i * workload);
 
-        // if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
-        if (pthread_create(threads + i, NULL, &process_transaction, idx) != 0 ) {
+        if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
             perror("FAILED TO CREATE WORKER THREAD");
             return 1;
         }
@@ -258,7 +264,7 @@ int main(int argc, char* argv[]) {
     // wait here until all threads are created and ready to run
     pthread_barrier_wait(&start_barrier);
 
-    // fork second process
+    // fork second process for puddles bank
     pid = fork();
     if (pid == 0) {
 
@@ -334,9 +340,6 @@ int main(int argc, char* argv[]) {
         printf("Worker thread %d finished with code %d!\n", i, ex);
     }
 
-    // printf("[Main Process] All worker threads finished!\n");
-
-    // all our worker threads are finished,
     // send bank thread a signal to wake it
     pthread_cond_signal(&update_cond);
 
@@ -344,9 +347,10 @@ int main(int argc, char* argv[]) {
     int * out;
     pthread_join(bank_thread, (void **)&out);
 
-    // wait for child process to finish
+    // send signal to exit child process
     kill(pid, SIGUSR2);
 
+    // wait for child process to exit
     int wait_res = waitpid(pid, NULL, 0);
     if (wait_res == -1) { perror("wait issue"); }
 
@@ -384,14 +388,18 @@ void * process_transaction(void * arg) {
     // wait until all threads are created to start processing
     pthread_barrier_wait(&start_barrier);
 
-    int start_index = *(int *)arg;
+    // deref workload data struct
+    workload_manager mgr = *(workload_manager *)arg;
 
-    for (int i = 0; i < workload; i++) {
+    // get starting index for this thread
+    int starting_index = (mgr.thread_idx * mgr.workload);
+
+    for (int i = 0; i < mgr.workload; i++) {
 
         int needs_update = 0;
 
         // get current transaction to process
-        command_line tran = transactions[start_index + i];
+        command_line tran = transactions[starting_index + i];
 
         // find requested account in account_array, store index
         int account_index = -1;
