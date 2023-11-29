@@ -76,37 +76,29 @@ int main(int argc, char* argv[]) {
         // create struct
         account entry;
 
-        // NOTE: i dont think i technically need to remove the newlines below...
-        // i think i could just call it with empty delim arg for strings
-        // or skip it all together when doing atoi, atof, etc
-
         //--- line n: index number
         getline(&line_buf, &len, fp);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.account_number, token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
         //---  line n + 2: password (char *)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
+        token_buffer = str_filler(line_buf, "");
         strcpy(entry.password, token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
         //--- line n + 3: initial balance (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        // sscanf(token_buffer.command_list[0], "%lf", &entry.balance);
-        entry.balance = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        token_buffer = str_filler(line_buf, "");
+        entry.balance = atof(line_buf);
 
         //--- line n + 4: reward rate (double)
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        entry.reward_rate = atof(token_buffer.command_list[0]);
-        free_command_line(&token_buffer);
+        entry.reward_rate = atof(line_buf);
 
         //--- transaction tracker starts at 0
         entry.transaction_tracker = 0.00;
@@ -116,14 +108,14 @@ int main(int argc, char* argv[]) {
         sprintf(out_path, "./output/account%d.txt", i);
         strcpy(entry.out_file, out_path);
 
-        // write initial balance to file
-
         // store the new entry in the array
         account_array[i] = entry;
+
+        // free token buffer
+        free_command_line(&token_buffer);
     }
 
     // init output files
-    // try with single / multiple file pointers if issues arise
     for (int i = 0; i < num_accounts; i++) {
         FILE * fp2 = fopen(account_array[i].out_file, "w");
         if (fp2 == NULL) {
@@ -158,13 +150,16 @@ int main(int argc, char* argv[]) {
         transactions[i] = token_buffer;
     }
 
-    // process transactions one at a time (single threaded environment)
+    // process transactions (single threaded)
+    printf("Welcome to Duck Bank!\n");
+    printf("Processing Transactions...\n");
     for (int i = 0; i < num_transactions; i++) {
         process_transaction(transactions + i);
     }
+    printf("Done!\n");
 
     // TESTING: print # of transactions, etc
-    printf("\nSTATS:\n");
+    printf("\nTRANSACTION STATS:\n");
     printf("transfers: %d\n", transfers);
     printf("checks: %d\n", checks);
     printf("deposits: %d\n", deposits);
@@ -227,7 +222,7 @@ void * process_transaction(command_line * arg) {
 
     // now that we have the account, check the password
     if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
-        printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
+        // printf("Incorrect password for account %s!\n", account_array[account_index].account_number);
         bad_pass++;
         return arg;
     }
@@ -255,8 +250,7 @@ void * process_transaction(command_line * arg) {
         // get value of transfer
         double val = atof(tran.command_list[4]);
 
-        // terminal output
-        printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
+        // printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
 
         // sending account: remove val from balance
         account_array[account_index].balance -= val;
@@ -273,7 +267,7 @@ void * process_transaction(command_line * arg) {
         
         checks++;
 
-        printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
+        // printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
     }
 
     /* DEPOSIT */
@@ -284,7 +278,7 @@ void * process_transaction(command_line * arg) {
         // get the deposit amount
         double val = atof(tran.command_list[3]);
 
-        printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
+        // printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
 
         // add the deposited amount to balance
         account_array[account_index].balance += val;
@@ -301,7 +295,7 @@ void * process_transaction(command_line * arg) {
         // get the withdraw amount
         double val = atof(tran.command_list[3]);
 
-        printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
+        // printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
 
         // remove the withdrawn amount from balance
         account_array[account_index].balance -= val;
