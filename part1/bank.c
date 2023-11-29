@@ -14,22 +14,9 @@
 
 
 /* ---------- P A R T  1 ----------*/
-// TODO: REMARKS:
-// "RACE CONDITIONS WILL PLAY A HUGE ROLE IN PART 3"
 
-// AN IMPORTANT QUESTION YOU SHUOLD ASK YOURSELF IS:
-// "HOW DO YOU MAKE SURE ONE THREAD WILL REACH A CERTAIN PART
-// OF THE CODE BEFORE ANOTHER?"
-
-// DEADLOCKS COULD MAKE YOUR PROGRAM STUC, AND IT IS
-// EXTREMELY DIFFICULT TO FIGURE OUT EXACTLY WHAT HAPPEND
-// AND HOW TO RESOLVE IT. THINK ABOUT WHAT VARIABLES YOU
-// COULD KEEP TRACK OF TO SIGNAL A DEADLOCK!
-/* --------------------------------*/
-
-
-// TESTING: used to track # of transactions, etc
-// (for debugging)
+// this vars used to track # of transactions, etc
+// for tracking progress and debugging
 int transfers = 0;
 int withdraws = 0;
 int checks = 0;
@@ -95,9 +82,6 @@ int main(int argc, char* argv[]) {
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
-        token_buffer = str_filler(line_buf, "\n");
-        printf("----- %s -----\n", line_buf);
-        free_command_line(&token_buffer);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
@@ -151,8 +135,6 @@ int main(int argc, char* argv[]) {
         fclose(fp2);
     }
 
-    // printf("FILE INIT LOOP COMPLETE\n");
-
     // get current position in the file
     long int pos = ftell(fp);
 
@@ -177,8 +159,7 @@ int main(int argc, char* argv[]) {
     }
 
     // process transactions one at a time (single threaded environment)
-    for (int i = 0; i < num_transactions; i++) {                  // FIXME: num_transactions / set amt for debugging
-        // printf("transaction #%d: ", i);
+    for (int i = 0; i < num_transactions; i++) {
         process_transaction(transactions + i);
     }
 
@@ -217,8 +198,6 @@ int main(int argc, char* argv[]) {
 }
 
 
-
-
 void * process_transaction(command_line * arg) {
     /* TRANSACTION FORMATS */
     //------------- 0       1       2           3               4
@@ -252,15 +231,6 @@ void * process_transaction(command_line * arg) {
         bad_pass++;
         return arg;
     }
-
-    // if passwords match, handle transaction:
-
-    // open SRC output file (in append mode!)
-    // FILE * src_fp = fopen(account_array[account_index].out_file, "a");
-    // if (src_fp == NULL) {
-    //     perror("Failed to open SOURCE output file");
-    //     return arg;
-    // }
 
     /* TRANSFER */
     if (strcmp(tran.command_list[0], "T") == 0) {
@@ -296,25 +266,6 @@ void * process_transaction(command_line * arg) {
 
         // receiving account: add val to balance
         account_array[dest_index].balance += val;
-
-        // write out new balance for SOURCE
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // immediately close SRC fp
-        // fclose(src_fp);
-
-        // open DEST output file (in append mode!)
-        // FILE * dest_fp = fopen(account_array[dest_index].out_file, "a");
-        // if (dest_fp == NULL) {
-        //     perror("Failed to open DESTINATION output file");
-        //     return arg;
-        // }
-
-        // write out new balance for DEST
-        // fprintf(dest_fp, "Current Balance:\t%.2f\n", account_array[dest_index].balance);
-
-        // immediately close DEST fp
-        // fclose(dest_fp);
     }
 
     /* CHECK BALANCE */
@@ -323,12 +274,6 @@ void * process_transaction(command_line * arg) {
         checks++;
 
         printf("Check Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // write out balance to output file
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // close fp
-        // fclose(src_fp);
     }
 
     /* DEPOSIT */
@@ -346,12 +291,6 @@ void * process_transaction(command_line * arg) {
 
         // adjust reward tracker value
         account_array[account_index].transaction_tracker += val;
-
-        // write out new balance to output file
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // close fp
-        // fclose(src_fp);
     }
 
     /* WITHDRAW */
@@ -369,13 +308,6 @@ void * process_transaction(command_line * arg) {
 
         // adjust reward tracker value
         account_array[account_index].transaction_tracker += val;
-
-
-        // write out new balance
-        // fprintf(src_fp, "Current Balance:\t%.2f\n", account_array[account_index].balance);
-
-        // close fp
-        // fclose(src_fp);
     }
 
     return arg;
@@ -413,6 +345,5 @@ void * update_balance() {
     
     // increment update counter
     balance_updates++;
-    // void * return_val = &balance_updates;
     return &balance_updates;
 }
