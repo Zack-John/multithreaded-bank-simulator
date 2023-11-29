@@ -438,7 +438,6 @@ void * process_transaction(void * arg) {
     pthread_mutex_unlock(&thread_mutex);
 
     // signal that we're done (for bank thread to check how many are now done)
-
     if (threads_done == 10) {
         pthread_cond_signal(&update_cond);
     }
@@ -464,6 +463,12 @@ void * update_balance() {
 
         // if we still have threads working...
         if (threads_done < 10) {
+
+            // increment balance counter
+            balance_updates++;
+
+            // console output
+            printf("[bank] update signal received (%d)\n", balance_updates);
 
             // update balances
             FILE * out_fp;
@@ -498,8 +503,6 @@ void * update_balance() {
                 // release account mutex
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
-
-            balance_updates++;
 
             pthread_cond_broadcast(&update_done_cond);
         }
