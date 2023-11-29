@@ -16,23 +16,13 @@
 #include "account.h"
 
 
+
+/* ---------- P A R T  4 ----------*/
+
 typedef struct workload_manager {
     int thread_idx;
     int workload;
 } workload_manager;
-
-/* ---------- P A R T  4 ----------*/
-
-// RUBRIC:
-
-// 5 points:
-// correct answer is reached and account#.txt is different every run
-// however, account#.txt should have the same number of lines every run
-
-// 10 points:
-// correct usage of mmap() munmap()
-
-/* --------------------------------*/
 
 pid_t pid;
 
@@ -59,12 +49,9 @@ account * account_array;
 command_line * transactions;
 
 
-
 void * process_transaction(void * arg);
 void * update_balance();
 
-void handle_usr1();
-void handle_usr2();
 
 int main(int argc, char* argv[]) {
 
@@ -76,9 +63,17 @@ int main(int argc, char* argv[]) {
 
     // check output directory
     // TODO: check for savings dir too
-    DIR * dir = opendir("./output");
+    DIR * dir;
+    dir = opendir("./output");
     if (dir == NULL) {
-        perror("Failed to open directory");
+        perror("Failed to find output directory");
+        return 1;
+    }
+    closedir(dir);
+
+    dir = opendir("./savings");
+    if (dir == NULL) {
+        perror("Failed to find savings directory");
         return 1;
     }
     closedir(dir);
@@ -185,7 +180,7 @@ int main(int argc, char* argv[]) {
                                 MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
     // copy accounts to shared memory
-    // and init bal, reward values
+    // and init bal, reward
     for (int i = 0; i < num_accounts; i++) {
         shared_memory[i] = account_array[i];
         shared_memory[i].balance = (shared_memory[i].balance * 0.2);
@@ -226,44 +221,8 @@ int main(int argc, char* argv[]) {
         transactions[i] = token_buffer;
     }
 
-    // get number of transactions for each thread
-    // ("evenly slice the number of transactions")
-    workload = (num_transactions / 10);
 
-    // init barrier
-    pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
-
-    // init bank thread
-    pthread_t bank_thread;
-
-    // init thread array
-    pthread_t * threads;
-    threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
-
-    // create bank thread
-    if (pthread_create(&bank_thread, NULL, &update_balance, NULL) != 0 ) {
-            perror("FAILED TO CREATE BANK THREAD");
-            return 1;
-        }
-
-    // create worker threads
-    for (int i = 0; i < 10; i++) {
-
-        // init thread manager struct
-        workload_manager * mgr = malloc(sizeof(workload_manager));
-        mgr->workload = workload;
-        mgr->thread_idx = i;
-
-        if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
-            perror("FAILED TO CREATE WORKER THREAD");
-            return 1;
-        }
-    }
-
-    // wait here until all threads are created and ready to run
-    pthread_barrier_wait(&start_barrier);
-
-    // fork second process for puddles bank
+    /* ---- SAVINGS BANK ---- */
     pid = fork();
     if (pid == 0) {
 
@@ -296,10 +255,12 @@ int main(int argc, char* argv[]) {
 
             // wait for signals
             sigwait(&sigset, &sig);
-            FILE * fp;
+            FILE * save_fp;
 
             // update signal
             if (sig == 10) {
+
+                printf("[puddles] updating savings accounts!\n");
 
                 for (int i = 0; i < num_accounts; i++) {
 
@@ -310,17 +271,17 @@ int main(int argc, char* argv[]) {
                     shared_memory[i].balance += val;
 
                     // open out_file (in append mode!)
-                    fp = fopen(savings_accts[i], "a");
-                    if (fp == NULL) {
-                        perror("Failed to open out_file");
-                        break;  // exit here instead?
+                    save_fp = fopen(savings_accts[i], "a");
+                    if (save_fp == NULL) {
+                        perror("Failed to open savings file");
+                        break;
                     }
 
                     // write new balance to out_file
-                    fprintf(fp, "Current Savings Balance  %.2f\n", shared_memory[i].balance);
+                    fprintf(save_fp, "Current Savings Balance  %.2f\n", shared_memory[i].balance);
 
                     // close out_file
-                    fclose(fp);
+                    fclose(save_fp);
                 }
             }
 
@@ -330,13 +291,63 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        exit(0);
+        // cleanup
+        fclose(fp);
+
+        free(line_buf);
+        free(account_array);
+
+        for (int i = 0; i < num_transactions; i++) {
+            free_command_line(&transactions[i]);
+        }
+
+        free(transactions);
+
+        return 0;
     }
+    /* -------------------- */
+
+    // get number of transactions for each thread
+    workload = (num_transactions / 10);
+
+    // init barrier
+    pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
+
+    // init bank thread
+    pthread_t bank_thread;
+
+    // init thread array
+    pthread_t * threads;
+    threads = (pthread_t *)malloc(sizeof(pthread_t) * 10);
+
+
+    // create bank thread
+    if (pthread_create(&bank_thread, NULL, &update_balance, NULL) != 0 ) {
+            perror("FAILED TO CREATE BANK THREAD");
+            return 1;
+        }
+
+    // create worker threads
+    for (int i = 0; i < 10; i++) {
+
+        // init thread manager struct
+        workload_manager * mgr = malloc(sizeof(workload_manager));
+        mgr->workload = workload;
+        mgr->thread_idx = i;
+
+        if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
+            perror("FAILED TO CREATE WORKER THREAD");
+            return 1;
+        }
+    }
+
+    // wait here until all threads are created and ready to run
+    pthread_barrier_wait(&start_barrier);
 
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
-        int ex = pthread_join(threads[i], NULL);
-        printf("Worker thread %d finished with code %d!\n", i, ex);
+        pthread_join(threads[i], NULL);
+        printf("[main] thread %d finished!\n", i);
     }
 
     // send bank thread a signal to wake it
@@ -563,7 +574,8 @@ void * process_transaction(void * arg) {
     if (threads_done == 10) { pthread_cond_signal(&update_cond); }
     
     free(arg);
-    pthread_exit(0);
+    
+    return NULL;
 }
 
 
@@ -581,6 +593,12 @@ void * update_balance() {
         pthread_cond_wait(&update_cond, &bank_mutex);
 
         if (threads_done < 10) {
+
+            // increment balance counter
+            balance_updates++;
+
+            // console output
+            printf("[bank] update signal received (%d)\n", balance_updates);
 
             // update balances
             FILE * out_fp;
@@ -615,9 +633,6 @@ void * update_balance() {
                 // release account mutex
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
-
-            // update counter
-            balance_updates++;
 
             // let the savings bank know that its time to update
             kill(pid, SIGUSR1);
