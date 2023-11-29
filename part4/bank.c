@@ -51,13 +51,6 @@ pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t update_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t update_done_cond = PTHREAD_COND_INITIALIZER;
 
-
-pthread_condattr_t savings_cond_attr;
-pthread_mutexattr_t savings_mutex_attr;
-
-pthread_cond_t savings_cond;
-pthread_mutex_t savings_mutex;
-
 account * account_array;
 command_line * transactions;
 
@@ -86,19 +79,6 @@ int main(int argc, char* argv[]) {
     }
     closedir(dir);
 
-    //------------------------------------------------
-
-    pthread_condattr_init(&savings_cond_attr);
-    pthread_condattr_setpshared(&savings_cond_attr, PTHREAD_PROCESS_SHARED);
-
-    pthread_mutexattr_init(&savings_mutex_attr);
-    pthread_mutexattr_setpshared(&savings_mutex_attr, PTHREAD_PROCESS_SHARED);
-
-    pthread_cond_init(&savings_cond, &savings_cond_attr);
-    pthread_mutex_init(&savings_mutex, &savings_mutex_attr);
-
-    //------------------------------------------------
-
     // initialize sigset
     sigset_t sigset;
     int sig;
@@ -124,9 +104,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // printf("signal stuff init'd\n");
-    //------------------------------------------------
-
     // declare line buffers
     size_t len = 0;
     char * line_buf = NULL;
@@ -144,8 +121,7 @@ int main(int argc, char* argv[]) {
     getline(&line_buf, &len, fp);
     num_accounts = atoi(line_buf);
 
-    // NOTE: an array might be really slow here
-    // if its an issue, use a hashmap
+    // init account array
     account_array = (account *)malloc(sizeof(account) * num_accounts);
 
     for (int i = 0; i < num_accounts; i++) {
@@ -159,9 +135,6 @@ int main(int argc, char* argv[]) {
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
-        // token_buffer = str_filler(line_buf, "\n");
-        // printf("----- %s -----\n", line_buf);
-        // free_command_line(&token_buffer);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
@@ -178,7 +151,6 @@ int main(int argc, char* argv[]) {
         //--- line n + 3: initial balance (double)
         getline(&line_buf, &len, fp);
         token_buffer = str_filler(line_buf, "\n");
-        // sscanf(token_buffer.command_list[0], "%lf", &entry.balance);
         entry.balance = atof(token_buffer.command_list[0]);
         free_command_line(&token_buffer);
 
@@ -215,18 +187,6 @@ int main(int argc, char* argv[]) {
         shared_memory[i].balance = (shared_memory[i].balance * 0.2);
         shared_memory[i].reward_rate = 0.02;
     }
-
-    // int * done = mmap(NULL, 16, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    // *done = 0;
-    // printf("*done: %d\n", *done);
-
-
-    // TESTING: print shared memory accounts
-    // for (int i = 0; i < num_accounts; i++) {
-    //     printf("[ar] %s | balance: %.2f | reward: %.3f\n", account_array[i].account_number, account_array[i].balance, account_array[i].reward_rate);
-    //     printf("[sh] %s | balance: %.2f | reward: %.3f\n", shared_memory[i].account_number, shared_memory[i].balance, shared_memory[i].reward_rate);
-    //     printf("\n");
-    // }
 
     // init output files
     for (int i = 0; i < num_accounts; i++) {
@@ -288,9 +248,6 @@ int main(int argc, char* argv[]) {
         int * idx = malloc(sizeof(int));
         *idx = (i * workload);
 
-        // printf("thread %d should start at index %d!\n", i, workload * i);
-        // printf("thread %d should start at index %d!\n", i, *idx);
-
         // if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
         if (pthread_create(threads + i, NULL, &process_transaction, idx) != 0 ) {
             perror("FAILED TO CREATE WORKER THREAD");
@@ -301,51 +258,83 @@ int main(int argc, char* argv[]) {
     // wait here until all threads are created and ready to run
     pthread_barrier_wait(&start_barrier);
 
-    // fork second process for puddles bank
+    // fork second process
     pid = fork();
     if (pid == 0) {
 
-        printf("[puddles] welcome to puddles bank! my pid is %d\n", getpid());
+        // init savings acct array
+        char savings_accts[num_accounts][64];
 
-        // printf("[puddles] init'ing sig actions...\n");
-        // struct sigaction action1;               // create sigaction struct
-        // memset(&action1, 0, sizeof(action1));   // init vals to 0
-        // action1.sa_handler = &handle_usr1;       // identify fxn to call when we receive SIGUSR1
-        // sigaction(SIGUSR1, &action1, NULL);      // hook the action to the signal
+        // init savings output files
+        for (int i = 0; i < num_accounts; i++) {
 
-        // struct sigaction action2;               // create sigaction struct
-        // memset(&action2, 0, sizeof(action2));   // init vals to 0
-        // action2.sa_handler = &handle_usr2;       // identify fxn to call when we receive SIGUSR2
-        // sigaction(SIGUSR1, &action2, NULL);     // hook the action to the signal
+            // generate file path
+            char file_path[64];
+            sprintf(file_path, "./savings/account%d.txt", i);
 
-        // printf("[puddles] sig stuff done!\n");
+            // store file path in arr
+            strcpy(savings_accts[i], file_path);
 
-        // wait for signal
-        while (1) {
-            // printf("[puddles] Child process waiting for signal...\n");
-            sigwait(&sigset, &sig);
-
-            if (sig == 10) {
-                printf("[puddles] received update signal, updating savings!\n");
+            FILE * save_fp = fopen(savings_accts[i], "w");
+            if (save_fp == NULL) {
+                perror("failed to init savings file");
+                return 1;
             }
+
+            fprintf(save_fp, "account: %d\n", i);
+            fprintf(save_fp, "Current Savings Balance  %.2f\n", shared_memory[i].balance);
+            fclose(save_fp);
+        }
+
+        // do the thing
+        while (1) {
+
+            // wait for signals
+            sigwait(&sigset, &sig);
+            FILE * fp;
+
+            // update signal
+            if (sig == 10) {
+
+                for (int i = 0; i < num_accounts; i++) {
+
+                    // get savings reward value
+                    double val = (shared_memory[i].balance * shared_memory[i].reward_rate);
+
+                    // add to savings balance
+                    shared_memory[i].balance += val;
+
+                    // open out_file (in append mode!)
+                    fp = fopen(savings_accts[i], "a");
+                    if (fp == NULL) {
+                        perror("Failed to open out_file");
+                        break;  // exit here instead?
+                    }
+
+                    // write new balance to out_file
+                    fprintf(fp, "Current Savings Balance  %.2f\n", shared_memory[i].balance);
+
+                    // close out_file
+                    fclose(fp);
+                }
+            }
+
+            // exit signal
             if (sig == 12) {
-                printf("[puddles] received end signal, exiting!\n");
                 break;
             }
         }
 
-        printf("[puddles] returning!\n");
-        // return 0;
         exit(0);
     }
 
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
-        pthread_join(threads[i], NULL);
-        // printf("[main] thread %d finished with code %d!\n", i, ex);
+        int ex = pthread_join(threads[i], NULL);
+        printf("Worker thread %d finished with code %d!\n", i, ex);
     }
 
-    printf("[main] all workers done!\n");
+    // printf("[Main Process] All worker threads finished!\n");
 
     // all our worker threads are finished,
     // send bank thread a signal to wake it
@@ -356,14 +345,13 @@ int main(int argc, char* argv[]) {
     pthread_join(bank_thread, (void **)&out);
 
     // wait for child process to finish
-    printf("[main] sending SIGUSR2 to puddles!\n");
     kill(pid, SIGUSR2);
 
     int wait_res = waitpid(pid, NULL, 0);
     if (wait_res == -1) { perror("wait issue"); }
 
     // print total number of updates
-    printf("\nTotal balance updates: %d\n", *out);
+    printf("Total balance updates: %d\n", *out);
 
     // write out final balances to output.txt
     FILE * outfp = fopen("output.txt", "w");
@@ -392,14 +380,6 @@ int main(int argc, char* argv[]) {
 
 
 void * process_transaction(void * arg) {
-    /* TRANSACTION FORMATS */
-    //------------- 0       1       2           3               4
-    // transfers:   T src_account password dest_account transfer_amount
-    // check bal:   C account_num password
-    // deposit:     D account_num password amount
-    // withdraw:    W account_num password amount
-
-    // --------------- PART 3 -------------------
 
     // wait until all threads are created to start processing
     pthread_barrier_wait(&start_barrier);
@@ -448,16 +428,8 @@ void * process_transaction(void * arg) {
 
         // if this is #5000, hold on to tracker mutex so other
         // threads have to wait for it to continue processing
-        if (transaction_counter == 5000) {
-
-            // we need to update after processing
-            needs_update = 1;
-        }
-
-        // if this isn't #5000, unlock tracker mutex and continue
-        else {
-            pthread_mutex_unlock(&counter_mutex);
-        }
+        if (transaction_counter == 5000) needs_update = 1;
+        else pthread_mutex_unlock(&counter_mutex);
 
         /* TRANSFER */
         if (strcmp(tran.command_list[0], "T") == 0) {
@@ -479,8 +451,6 @@ void * process_transaction(void * arg) {
 
             // get value of transfer
             double val = atof(tran.command_list[4]);
-
-            // printf("Transfer: %s ----> %s (%.2f)\n", tran.command_list[1], tran.command_list[3], val);
 
             // lock source account mutex
             pthread_mutex_lock(&account_array[account_index].ac_lock);
@@ -504,20 +474,13 @@ void * process_transaction(void * arg) {
             pthread_mutex_unlock(&account_array[dest_index].ac_lock);
         }
 
-        // /* CHECK BALANCE */
-        // if (strcmp(tran.command_list[0], "C") == 0) {
-        //     // NOTE: Dewi said we can just do nothing here...
-        //     continue;
-        // }
-
         /* DEPOSIT */
         if (strcmp(tran.command_list[0], "D") == 0) {
 
             // get the deposit amount
             double val = atof(tran.command_list[3]);
 
-            // printf("Deposit: %s - %.2f\n", tran.command_list[1], val);
-
+            // lock mutex
             pthread_mutex_lock(&account_array[account_index].ac_lock);
 
             // add the deposited amount to balance
@@ -526,6 +489,7 @@ void * process_transaction(void * arg) {
             // adjust reward tracker value
             account_array[account_index].transaction_tracker += val;
 
+            // unlock mutex
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
 
@@ -535,9 +499,8 @@ void * process_transaction(void * arg) {
             // get the withdraw amount
             double val = atof(tran.command_list[3]);
 
+            // lock mutex
             pthread_mutex_lock(&account_array[account_index].ac_lock);
-
-            // printf("Withdraw: %s - %.2f\n", account_array[account_index].account_number, val);
 
             // remove the withdrawn amount from balance
             account_array[account_index].balance -= val;
@@ -545,10 +508,11 @@ void * process_transaction(void * arg) {
             // adjust reward tracker value
             account_array[account_index].transaction_tracker += val;
 
+            // unlock mutex
             pthread_mutex_unlock(&account_array[account_index].ac_lock);
         }
 
-        // if this was #5000 we need to update
+        // if we need to update...
         if (needs_update) {
 
             // lock update mutex
@@ -558,7 +522,7 @@ void * process_transaction(void * arg) {
             pthread_cond_signal(&update_cond);
 
             // wait for bank thread to finish update
-            // (timedwait for 1 second here to fix an occasional deadlock)
+            // (timedwait here to handle a deadlock)
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
             ts.tv_sec += 1;
@@ -588,17 +552,10 @@ void * process_transaction(void * arg) {
     // unlock the thread mutex
     pthread_mutex_unlock(&thread_mutex);
 
-    // signal that we're done (for bank thread to check how many are now done)
-    // pthread_cond_signal(&bank_cond);
-
-    // TESTING
-    if (threads_done == 10) {
-        // printf("[thread exit] THIS IS THE LAST THREAD TO EXIT, SENDING ANOTHER UPDATE SIGNAL\n");
-        pthread_cond_signal(&update_cond);
-    }
+    // if this is the last thread, signal bank to exit
+    if (threads_done == 10) { pthread_cond_signal(&update_cond); }
     
     free(arg);
-
     pthread_exit(0);
 }
 
@@ -615,11 +572,6 @@ void * update_balance() {
 
         // wait for signal that we need to update balances
         pthread_cond_wait(&update_cond, &bank_mutex);
-
-        // ^^^ pthread_cond_wait is the same as:
-        // pthread_mutex_unlock(bank_mutex)
-        // wait for signal on bank_cond
-        // pthread_mutex_lock(bank_mutex)
 
         if (threads_done < 10) {
 
@@ -657,6 +609,7 @@ void * update_balance() {
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
 
+            // update counter
             balance_updates++;
 
             // let the savings bank know that its time to update
@@ -665,11 +618,6 @@ void * update_balance() {
             // let the worker threads know they can continue
             pthread_cond_broadcast(&update_done_cond);
         }
-
-        else if (threads_done == 10) {
-            printf("[bank] ALL THREADS DONE!\n");
-            // kill(pid, SIGUSR2);
-        }
     }
 
     // unlock the bank mutex since we're done
@@ -677,13 +625,4 @@ void * update_balance() {
     
     // return update counter
     return &balance_updates;
-}
-
-
-void handle_usr1() {
-    printf("[handler] SIGUSR 1 RECEIVED!!\n");
-}
-
-void handle_usr2() {
-    printf("[handler] SIGUSR 2 RECEIVED!!\n");
 }
