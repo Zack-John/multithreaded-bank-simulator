@@ -31,29 +31,10 @@
 // 15 points:
 // correct usage of pthread_cond_wait and pthread_cond_broadcast / signal
 
-
-// REMARKS:
-// "RACE CONDITIONS WILL PLAY A HUGE ROLE IN PART 3"
-
-// AN IMPORTANT QUESTION YOU SHUOLD ASK YOURSELF IS:
-// "HOW DO YOU MAKE SURE ONE THREAD WILL REACH A CERTAIN PART
-// OF THE CODE BEFORE ANOTHER?"
-
-// DEADLOCKS COULD MAKE YOUR PROGRAM STUCK, AND IT IS
-// EXTREMELY DIFFICULT TO FIGURE OUT EXACTLY WHAT HAPPEND
-// AND HOW TO RESOLVE IT. THINK ABOUT WHAT VARIABLES YOU
-// COULD KEEP TRACK OF TO SIGNAL A DEADLOCK!
-/* --------------------------------*/
-
-
-// TESTING: used to track # of transactions, etc
-// (for debugging)
-// int transfers = 0;
-// int withdraws = 0;
-// int checks = 0;
-// int deposits = 0;
-// int bad_pass = 0;
-// int bad_acct = 0;
+typedef struct workload_manager {
+    int thread_idx;
+    int workload;
+} workload_manager;
 
 int workload = 0;
 int num_accounts = 0;
@@ -132,9 +113,6 @@ int main(int argc, char* argv[]) {
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
-        // token_buffer = str_filler(line_buf, "\n");
-        // printf("----- %s -----\n", line_buf);
-        // free_command_line(&token_buffer);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
@@ -241,14 +219,12 @@ int main(int argc, char* argv[]) {
         // ...
         // 9 * 12k = 108k ---> 119999
 
-        int * idx = malloc(sizeof(int));
-        *idx = (i * workload);
+        // init thread manager struct
+        workload_manager * mgr = malloc(sizeof(workload_manager));
+        mgr->workload = workload;
+        mgr->thread_idx = i;
 
-        // printf("thread %d should start at index %d!\n", i, workload * i);
-        // printf("thread %d should start at index %d!\n", i, *idx);
-
-        // if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
-        if (pthread_create(threads + i, NULL, &process_transaction, idx) != 0 ) {
+        if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
             perror("FAILED TO CREATE WORKER THREAD");
             return 1;
         }
@@ -302,26 +278,22 @@ int main(int argc, char* argv[]) {
 
 
 void * process_transaction(void * arg) {
-    /* TRANSACTION FORMATS */
-    //------------- 0       1       2           3               4
-    // transfers:   T src_account password dest_account transfer_amount
-    // check bal:   C account_num password
-    // deposit:     D account_num password amount
-    // withdraw:    W account_num password amount
-
-    // --------------- PART 3 -------------------
 
     // wait until all threads are created to start processing
     pthread_barrier_wait(&start_barrier);
 
-    int start_index = *(int *)arg;
+    // deref workload data struct
+    workload_manager mgr = *(workload_manager *)arg;
 
-    for (int i = 0; i < workload; i++) {
+    // get starting index for this thread
+    int starting_index = (mgr.thread_idx * mgr.workload);
+
+    for (int i = 0; i < mgr.workload; i++) {
 
         int needs_update = 0;
 
         // get current transaction to process
-        command_line tran = transactions[start_index + i];
+        command_line tran = transactions[starting_index + i];
 
         // find requested account in account_array, store index
         int account_index = -1;
