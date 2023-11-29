@@ -14,33 +14,11 @@
 
 
 /* ---------- P A R T  2 ----------*/
-// TODO: REMARKS:
-// "RACE CONDITIONS WILL PLAY A HUGE ROLE IN PART 3"
 
-// AN IMPORTANT QUESTION YOU SHUOLD ASK YOURSELF IS:
-// "HOW DO YOU MAKE SURE ONE THREAD WILL REACH A CERTAIN PART
-// OF THE CODE BEFORE ANOTHER?"
-
-// DEADLOCKS COULD MAKE YOUR PROGRAM STUC, AND IT IS
-// EXTREMELY DIFFICULT TO FIGURE OUT EXACTLY WHAT HAPPEND
-// AND HOW TO RESOLVE IT. THINK ABOUT WHAT VARIABLES YOU
-// COULD KEEP TRACK OF TO SIGNAL A DEADLOCK!
-/* --------------------------------*/
-
-
-// "signal is generally used when you expect only one thread needs to start working,
-// you use broadcast when theres a possibility that the work requires more than one thread"
-// (so will probably want to use signal to communicate with bank thread and broadcast for workers)
-
-
-// TESTING: used to track # of transactions, etc
-// (for debugging)
-// int transfers = 0;
-// int withdraws = 0;
-// int checks = 0;
-// int deposits = 0;
-// int bad_pass = 0;
-// int bad_acct = 0;
+typedef struct workload_manager {
+    int thread_idx;
+    int workload;
+} workload_manager;
 
 int workload = 0;
 int num_accounts = 0;
@@ -106,9 +84,6 @@ int main(int argc, char* argv[]) {
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
-        // token_buffer = str_filler(line_buf, "\n");
-        // printf("----- %s -----\n", line_buf);
-        // free_command_line(&token_buffer);
 
         //--- line n + 1: account number (char *)
         getline(&line_buf, &len, fp);
@@ -189,7 +164,6 @@ int main(int argc, char* argv[]) {
     // get number of transactions for each thread
     // ("evenly slice the number of transactions")
     workload = (num_transactions / 10);
-    // printf("workload: %d\n", workload);
 
     // init bank thread
     pthread_t bank_thread;
@@ -213,14 +187,12 @@ int main(int argc, char* argv[]) {
         // ...
         // 9 * 12k = 108k ---> 119999
 
-        int * idx = malloc(sizeof(int));
-        *idx = (i * workload);
+        // init thread manager struct
+        workload_manager * mgr = malloc(sizeof(workload_manager));
+        mgr->workload = workload;
+        mgr->thread_idx = i;
 
-        // printf("thread %d should start at index %d!\n", i, workload * i);
-        // printf("thread %d should start at index %d!\n", i, *idx);
-
-        // if (pthread_create(threads + i, NULL, &process_transaction, transactions + (i * workload)) != 0 ) {
-        if (pthread_create(threads + i, NULL, &process_transaction, idx) != 0 ) {
+        if (pthread_create(threads + i, NULL, &process_transaction, mgr) != 0 ) {
             perror("FAILED TO CREATE WORKER THREAD");
             return 1;
         }
@@ -229,7 +201,7 @@ int main(int argc, char* argv[]) {
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
         pthread_join(threads[i], NULL);
-        printf("[join loop] thread %d finished!\n", i);
+        printf("[main] thread %d finished!\n", i);
     }
 
     printf("[main] all workers done!\n");
@@ -240,28 +212,7 @@ int main(int argc, char* argv[]) {
 
     // --------------------------------
 
-    /* expected:
-    STATS:
-    transfers: 50000
-    checks: 10000
-    deposits: 20000
-    withdraws: 20000
-    bad_pass: 20000
-    bad_acct: 0
-    total: 120000 */
-
-    // TESTING: print # of transactions, etc
-    // printf("\nSTATS:\n");
-    // printf("transfers: %d\n", transfers);
-    // printf("checks: %d\n", checks);
-    // printf("deposits: %d\n", deposits);
-    // printf("withdraws: %d\n", withdraws);
-    // printf("bad_pass: %d\n", bad_pass);
-    // printf("bad_acct: %d\n", bad_acct);
-    // printf("total: %d\n\n", (transfers + checks + deposits + withdraws + bad_pass));
-
-    // calculate rewards
-    // int * out = update_balance(account_array);
+    // print balance updates
     printf("Total balance updates: %d\n\n", *out);
 
     // write out final balances to output.txt
@@ -285,35 +236,22 @@ int main(int argc, char* argv[]) {
 
     free(transactions);
 
-    // FIXME: commenting these lines doesnt cause any issues in valgrind... unneccesary?
-    // pthread_cond_destroy(&bankCond);
-    // pthread_mutex_destroy(&bankMutex);
-
     return 0;
 }
 
 
 void * process_transaction(void * arg) {
-    /* TRANSACTION FORMATS */
-    //------------- 0       1       2           3               4
-    // transfers:   T src_account password dest_account transfer_amount
-    // check bal:   C account_num password
-    // deposit:     D account_num password amount
-    // withdraw:    W account_num password amount
 
-    // --------------- PART 2 -------------------
-    // now that we're inside process_transaction(), we need each thread
-    // to do its fair shair of the transactions, stored in 'workload'
-    // so we have to:
-    // 1. iterate through the transaction array, starting point --> workload
-    // 2. at each transaction, parse it and handle it as i have been below
+    // deref workload data struct
+    workload_manager mgr = *(workload_manager *)arg;
 
-    int start_index = *(int *)arg;
+    // get starting index for this thread
+    int starting_index = (mgr.thread_idx * mgr.workload);
 
-    for (int i = 0; i < workload; i++) {
+    for (int i = 0; i < mgr.workload; i++) {
 
         // get current transaction to process
-        command_line tran = transactions[start_index + i];
+        command_line tran = transactions[starting_index + i];
 
         // find requested account in account_array, store index
         int account_index = -1;
@@ -444,7 +382,6 @@ void * process_transaction(void * arg) {
 
     // increment threads_done
     threads_done++;
-    printf("threads_done is now %d\n", threads_done);
 
     // unlock the bank mutex
     pthread_mutex_unlock(&bankMutex);
@@ -453,6 +390,8 @@ void * process_transaction(void * arg) {
     pthread_cond_signal(&bankCond);
     
     free(arg);
+
+    pthread_exit(0);
 }
 
 
@@ -461,19 +400,10 @@ void * update_balance() {
     /* this function will return the number
     of times it had to update each account */
 
-    // wait until a thread signals that its done
-    // check if num_threads_done == 10
-    // if not, go back to waiting
-    // if yes, update balance and exit
-    // [could probably use a barrier here too]
-
     // MUST LOCK MUTEX BEFORE WAITING
     pthread_mutex_lock(&bankMutex);
 
     while (threads_done < 10) {
-
-        printf("threads_done still < 10...\n");
-        printf("waiting for the next signal\n");
 
         // wait for signal that a thread completed
         pthread_cond_wait(&bankCond, &bankMutex);
@@ -484,7 +414,7 @@ void * update_balance() {
         // pthread_mutex_lock(bankMutex)
     }
 
-    printf("[update] ALL THREADS ARE DONE, UPDATING BALANCES!\n");
+    printf("All threads are done, updating balances!\n");
 
     FILE * out_fp;
 
