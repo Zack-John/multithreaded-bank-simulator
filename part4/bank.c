@@ -2,13 +2,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <pthread.h>
-
 #include <errno.h>
-#include <sys/types.h>
+
+#include <pthread.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include <sys/mman.h>
+#include <signal.h>
 
 #include "string_parser.h"
 #include "account.h"
@@ -28,6 +30,7 @@
 
 /* --------------------------------*/
 
+pid_t pid;
 
 int workload = 0;
 int num_accounts = 0;
@@ -43,20 +46,28 @@ pthread_barrier_t start_barrier; // c17 -> gnu99
 
 pthread_mutex_t update_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 pthread_cond_t update_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t update_done_cond = PTHREAD_COND_INITIALIZER;
 
+
+pthread_condattr_t savings_cond_attr;
+pthread_mutexattr_t savings_mutex_attr;
+
+pthread_cond_t savings_cond;
+pthread_mutex_t savings_mutex;
+
 account * account_array;
 command_line * transactions;
 
-// TESTING
-pthread_mutex_t thread_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 void * process_transaction(void * arg);
 void * update_balance();
 
+void handle_usr1();
+void handle_usr2();
 
 int main(int argc, char* argv[]) {
 
@@ -67,12 +78,54 @@ int main(int argc, char* argv[]) {
     }
 
     // check output directory
+    // TODO: check for savings dir too
     DIR * dir = opendir("./output");
     if (dir == NULL) {
         perror("Failed to open directory");
         return 1;
     }
     closedir(dir);
+
+    //------------------------------------------------
+
+    pthread_condattr_init(&savings_cond_attr);
+    pthread_condattr_setpshared(&savings_cond_attr, PTHREAD_PROCESS_SHARED);
+
+    pthread_mutexattr_init(&savings_mutex_attr);
+    pthread_mutexattr_setpshared(&savings_mutex_attr, PTHREAD_PROCESS_SHARED);
+
+    pthread_cond_init(&savings_cond, &savings_cond_attr);
+    pthread_mutex_init(&savings_mutex, &savings_mutex_attr);
+
+    //------------------------------------------------
+
+    // initialize sigset
+    sigset_t sigset;
+    int sig;
+
+    // create an empty sigset_t
+    sigemptyset(&sigset);
+
+    // add SIGUSR1 signal to wait set
+    if (sigaddset(&sigset, SIGUSR1) != 0) {
+        perror("Failed to add signal to set\n");
+        return 1;
+    }
+
+    // add SIGUSR2 signal to wait set
+    if (sigaddset(&sigset, SIGUSR2) != 0) {
+        perror("Failed to add signal to set\n");
+        return 1;
+    }
+
+    // use sigprocmask() to add the signal set in the sigset for blocking
+    if (sigprocmask(SIG_SETMASK, &sigset, NULL) != 0) {
+        perror("Failed to set proc mask");
+        return 1;
+    }
+
+    // printf("signal stuff init'd\n");
+    //------------------------------------------------
 
     // declare line buffers
     size_t len = 0;
@@ -94,12 +147,6 @@ int main(int argc, char* argv[]) {
     // NOTE: an array might be really slow here
     // if its an issue, use a hashmap
     account_array = (account *)malloc(sizeof(account) * num_accounts);
-
-    // // create shared memory
-    // int * shared_memory = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
-    //                             MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    
-    // printf("shared_memory: %p\n", shared_memory);
 
     for (int i = 0; i < num_accounts; i++) {
 
@@ -157,27 +204,29 @@ int main(int argc, char* argv[]) {
         account_array[i] = entry;
     }
 
-    // FIXME:
-
     // create shared memory
     account * shared_memory = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
                                 MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    
-    printf("shared_memory pointer: %p\n", shared_memory);
-    printf("sizeof(*shared_memory): %ld\n", sizeof(*shared_memory));
-    printf("sizeof(*account_array): %ld\n", sizeof(*account_array));
 
     // copy accounts to shared memory
+    // and init bal, reward values
     for (int i = 0; i < num_accounts; i++) {
         shared_memory[i] = account_array[i];
+        shared_memory[i].balance = (shared_memory[i].balance * 0.2);
+        shared_memory[i].reward_rate = 0.02;
     }
+
+    // int * done = mmap(NULL, 16, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    // *done = 0;
+    // printf("*done: %d\n", *done);
+
 
     // TESTING: print shared memory accounts
-    for (int i = 0; i < num_accounts; i++) {
-        printf("shared_memory[%d]: %s\n", i, shared_memory[i].account_number);
-    }
-
-    printf("copied account_array to shared_memory!\n");
+    // for (int i = 0; i < num_accounts; i++) {
+    //     printf("[ar] %s | balance: %.2f | reward: %.3f\n", account_array[i].account_number, account_array[i].balance, account_array[i].reward_rate);
+    //     printf("[sh] %s | balance: %.2f | reward: %.3f\n", shared_memory[i].account_number, shared_memory[i].balance, shared_memory[i].reward_rate);
+    //     printf("\n");
+    // }
 
     // init output files
     for (int i = 0; i < num_accounts; i++) {
@@ -235,12 +284,6 @@ int main(int argc, char* argv[]) {
 
     // create worker threads
     for (int i = 0; i < 10; i++) {
-        // index calculation w 12k workload:
-        // 0 * 12k = 0 -----> 11999
-        // 1 * 12k = 12k ---> 23999
-        // 2 * 12k = 24k ---> 35999
-        // ...
-        // 9 * 12k = 108k ---> 119999
 
         int * idx = malloc(sizeof(int));
         *idx = (i * workload);
@@ -258,10 +301,48 @@ int main(int argc, char* argv[]) {
     // wait here until all threads are created and ready to run
     pthread_barrier_wait(&start_barrier);
 
+    // fork second process for puddles bank
+    pid = fork();
+    if (pid == 0) {
+
+        printf("[puddles] welcome to puddles bank! my pid is %d\n", getpid());
+
+        // printf("[puddles] init'ing sig actions...\n");
+        // struct sigaction action1;               // create sigaction struct
+        // memset(&action1, 0, sizeof(action1));   // init vals to 0
+        // action1.sa_handler = &handle_usr1;       // identify fxn to call when we receive SIGUSR1
+        // sigaction(SIGUSR1, &action1, NULL);      // hook the action to the signal
+
+        // struct sigaction action2;               // create sigaction struct
+        // memset(&action2, 0, sizeof(action2));   // init vals to 0
+        // action2.sa_handler = &handle_usr2;       // identify fxn to call when we receive SIGUSR2
+        // sigaction(SIGUSR1, &action2, NULL);     // hook the action to the signal
+
+        // printf("[puddles] sig stuff done!\n");
+
+        // wait for signal
+        while (1) {
+            // printf("[puddles] Child process waiting for signal...\n");
+            sigwait(&sigset, &sig);
+
+            if (sig == 10) {
+                printf("[puddles] received update signal, updating savings!\n");
+            }
+            if (sig == 12) {
+                printf("[puddles] received end signal, exiting!\n");
+                break;
+            }
+        }
+
+        printf("[puddles] returning!\n");
+        // return 0;
+        exit(0);
+    }
+
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
-        int ex = pthread_join(threads[i], NULL);
-        printf("[main] thread %d finished with code %d!\n", i, ex);
+        pthread_join(threads[i], NULL);
+        // printf("[main] thread %d finished with code %d!\n", i, ex);
     }
 
     printf("[main] all workers done!\n");
@@ -274,13 +355,19 @@ int main(int argc, char* argv[]) {
     int * out;
     pthread_join(bank_thread, (void **)&out);
 
+    // wait for child process to finish
+    printf("[main] sending SIGUSR2 to puddles!\n");
+    kill(pid, SIGUSR2);
+
+    int wait_res = waitpid(pid, NULL, 0);
+    if (wait_res == -1) { perror("wait issue"); }
+
     // print total number of updates
-    printf("Total balance updates: %d\n", *out);
+    printf("\nTotal balance updates: %d\n", *out);
 
     // write out final balances to output.txt
     FILE * outfp = fopen("output.txt", "w");
     for (int i = 0; i < num_accounts; i++) {
-        // printf("%d balance:\t%.2f\n\n", i, account_array[i].balance);           // TODO: remove this line when done
         fprintf(outfp, "%d balance:\t%.2f\n\n", i, account_array[i].balance);
     }
 
@@ -297,6 +384,8 @@ int main(int argc, char* argv[]) {
     }
 
     free(transactions);
+
+    munmap(shared_memory, sizeof(*shared_memory));
 
     return 0;
 }
@@ -570,13 +659,17 @@ void * update_balance() {
 
             balance_updates++;
 
+            // let the savings bank know that its time to update
+            kill(pid, SIGUSR1);
+
+            // let the worker threads know they can continue
             pthread_cond_broadcast(&update_done_cond);
         }
 
         else if (threads_done == 10) {
-            // printf("[bank] ALL THREADS DONE, SHOULD BE EXITING LOOP\n");
+            printf("[bank] ALL THREADS DONE!\n");
+            // kill(pid, SIGUSR2);
         }
-
     }
 
     // unlock the bank mutex since we're done
@@ -584,4 +677,13 @@ void * update_balance() {
     
     // return update counter
     return &balance_updates;
+}
+
+
+void handle_usr1() {
+    printf("[handler] SIGUSR 1 RECEIVED!!\n");
+}
+
+void handle_usr2() {
+    printf("[handler] SIGUSR 2 RECEIVED!!\n");
 }
