@@ -29,9 +29,6 @@ int balance_updates = 0;
 int threads_done = 0;
 int transaction_counter = 0;
 
-pthread_mutex_t bank_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t bank_cond = PTHREAD_COND_INITIALIZER;
-
 pthread_barrier_t start_barrier; // c17 -> gnu99
 
 pthread_mutex_t update_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -454,12 +451,12 @@ void * update_balance() {
     of times it had to update each account */
 
     // must lock mutex before waiting
-    pthread_mutex_lock(&bank_mutex);
+    pthread_mutex_lock(&update_mutex);
 
     while (threads_done < 10) {
 
         // wait for signal that we need to update balances
-        pthread_cond_wait(&update_cond, &bank_mutex);
+        pthread_cond_wait(&update_cond, &update_mutex);
 
         // if we still have threads working...
         if (threads_done < 10) {
@@ -504,12 +501,12 @@ void * update_balance() {
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
 
-            pthread_cond_broadcast(&update_done_cond);
+            pthread_cond_signal(&update_done_cond);
         }
     }
 
     // unlock the bank mutex since we're done
-    pthread_mutex_unlock(&bank_mutex);
+    pthread_mutex_unlock(&update_mutex);
     
     // return update counter
     return &balance_updates;
