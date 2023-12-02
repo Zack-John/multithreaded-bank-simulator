@@ -24,7 +24,6 @@ typedef struct workload_manager {
     int workload;
 } workload_manager;
 
-pid_t pid;
 
 int workload = 0;
 int num_accounts = 0;
@@ -32,9 +31,6 @@ int balance_updates = 0;
 
 int threads_done = 0;
 int transaction_counter = 0;
-
-pthread_mutex_t bank_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t bank_cond = PTHREAD_COND_INITIALIZER;
 
 pthread_barrier_t start_barrier; // c17 -> gnu99
 
@@ -47,6 +43,9 @@ pthread_cond_t update_done_cond = PTHREAD_COND_INITIALIZER;
 
 account * account_array;
 command_line * transactions;
+
+pid_t pid;
+sigset_t sigset;
 
 
 void * process_transaction(void * arg);
@@ -62,7 +61,6 @@ int main(int argc, char* argv[]) {
     }
 
     // check output directory
-    // TODO: check for savings dir too
     DIR * dir;
     dir = opendir("./output");
     if (dir == NULL) {
@@ -77,10 +75,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     closedir(dir);
-
-    // initialize sigset
-    sigset_t sigset;
-    int sig;
 
     // create an empty sigset_t
     sigemptyset(&sigset);
@@ -127,10 +121,6 @@ int main(int argc, char* argv[]) {
 
         // create struct
         account entry;
-
-        // NOTE: i dont think i technically need to remove the newlines below...
-        // i think i could just call it with empty delim arg for strings
-        // or skip it all together when doing atoi, atof, etc
 
         //--- line n: index number
         getline(&line_buf, &len, fp);
@@ -224,6 +214,7 @@ int main(int argc, char* argv[]) {
 
     /* ---- SAVINGS BANK ---- */
     pid = fork();
+
     if (pid == 0) {
 
         // init savings acct array
@@ -250,11 +241,14 @@ int main(int argc, char* argv[]) {
             fclose(save_fp);
         }
 
+        int sig;
+
         // do the thing
         while (1) {
 
             // wait for signals
             sigwait(&sigset, &sig);
+
             FILE * save_fp;
 
             // update signal
@@ -283,24 +277,23 @@ int main(int argc, char* argv[]) {
                     // close out_file
                     fclose(save_fp);
                 }
+
+                // let main bank know we're done
+                kill(getppid(), SIGUSR1);
             }
 
             // exit signal
-            if (sig == 12) {
-                break;
-            }
+            if (sig == 12) break;
         }
 
         // cleanup
         fclose(fp);
-
         free(line_buf);
         free(account_array);
-
+        
         for (int i = 0; i < num_transactions; i++) {
             free_command_line(&transactions[i]);
         }
-
         free(transactions);
 
         return 0;
@@ -311,7 +304,7 @@ int main(int argc, char* argv[]) {
     workload = (num_transactions / 10);
 
     // init barrier
-    pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 main thread
+    pthread_barrier_init(&start_barrier, NULL, 11); // 10 workers + 1 bank thread
 
     // init bank thread
     pthread_t bank_thread;
@@ -341,28 +334,26 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // wait here until all threads are created and ready to run
-    pthread_barrier_wait(&start_barrier);
-
     // wait for worker threads to finish
     for (int i = 0; i < 10; i++) {
         pthread_join(threads[i], NULL);
         printf("[main] thread %d finished!\n", i);
     }
-
-    // send bank thread a signal to wake it
-    pthread_cond_signal(&update_cond);
+    
+    printf("[main] all workers done!\n");
 
     // wait for bank thread to finish    
     int * out;
     pthread_join(bank_thread, (void **)&out);
+    printf("[main] bank thread done!\n");
 
     // send signal to exit child process
     kill(pid, SIGUSR2);
 
     // wait for child process to exit
     int wait_res = waitpid(pid, NULL, 0);
-    if (wait_res == -1) { perror("wait issue"); }
+    if (wait_res == -1) perror("wait issue");
+    else printf("[main] puddles done!\n");
 
     // print total number of updates
     printf("Total balance updates: %d\n", *out);
@@ -395,11 +386,11 @@ int main(int argc, char* argv[]) {
 
 void * process_transaction(void * arg) {
 
-    // wait until all threads are created to start processing
-    pthread_barrier_wait(&start_barrier);
-
     // deref workload data struct
     workload_manager mgr = *(workload_manager *)arg;
+
+    // wait until all threads are created to start processing
+    pthread_barrier_wait(&start_barrier);
 
     // get starting index for this thread
     int starting_index = (mgr.thread_idx * mgr.workload);
@@ -428,7 +419,6 @@ void * process_transaction(void * arg) {
 
         // now that we have the account, check the password
         if (strcmp(account_array[account_index].password, tran.command_list[2]) != 0) {
-            // printf("BAD PASSWORD for account %s!\n", account_array[account_index].account_number);
             continue;
         }
 
@@ -539,18 +529,13 @@ void * process_transaction(void * arg) {
             // signal bank thread for update
             pthread_cond_signal(&update_cond);
 
-            // wait for bank thread to finish update
-            // (timedwait here to handle a deadlock)
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 1;
-
-            pthread_cond_timedwait(&update_done_cond, &update_mutex, &ts);
+            // wait for updates to be done
+            pthread_cond_wait(&update_done_cond, &update_mutex);
 
             // reset tracker to 0
             transaction_counter = 0;
 
-            // unlock update mutex once bank is done updating
+            // unlock update mutex
             pthread_mutex_unlock(&update_mutex);
 
             // finally, release the tracker mutex to let
@@ -567,14 +552,18 @@ void * process_transaction(void * arg) {
     // increment threads_done
     threads_done++;
 
+    // if we're the last thread, signal bank to wrap up
+    if (threads_done == 10) {
+        pthread_mutex_lock(&update_mutex);
+        pthread_cond_signal(&update_cond);
+        pthread_mutex_unlock(&update_mutex);
+    }
+
     // unlock the thread mutex
     pthread_mutex_unlock(&thread_mutex);
-
-    // if this is the last thread, signal bank to exit
-    if (threads_done == 10) { pthread_cond_signal(&update_cond); }
     
     free(arg);
-    
+
     return NULL;
 }
 
@@ -584,13 +573,16 @@ void * update_balance() {
     /* this function will return the number
     of times it had to update each account */
 
-    // must lock mutex before waiting
-    pthread_mutex_lock(&bank_mutex);
+    // make sure bank thread has this lock first
+    pthread_mutex_lock(&update_mutex);
+
+    // wait until all threads are ready
+    pthread_barrier_wait(&start_barrier);
 
     while (threads_done < 10) {
 
         // wait for signal that we need to update balances
-        pthread_cond_wait(&update_cond, &bank_mutex);
+        pthread_cond_wait(&update_cond, &update_mutex);
 
         if (threads_done < 10) {
 
@@ -598,7 +590,7 @@ void * update_balance() {
             balance_updates++;
 
             // console output
-            printf("[bank] update signal received (%d)\n", balance_updates);
+            printf("[bank] updating balances! (%d)\n", balance_updates);
 
             // update balances
             FILE * out_fp;
@@ -634,16 +626,20 @@ void * update_balance() {
                 pthread_mutex_unlock(&account_array[i].ac_lock);
             }
 
+            // let the worker threads know they can continue
+            pthread_cond_broadcast(&update_done_cond);
+
             // let the savings bank know that its time to update
             kill(pid, SIGUSR1);
 
-            // let the worker threads know they can continue
-            pthread_cond_broadcast(&update_done_cond);
+            // wait for savings accounts to be updated
+            int signal;
+            sigwait(&sigset, &signal);
         }
     }
 
     // unlock the bank mutex since we're done
-    pthread_mutex_unlock(&bank_mutex);
+    pthread_mutex_unlock(&update_mutex);
     
     // return update counter
     return &balance_updates;
