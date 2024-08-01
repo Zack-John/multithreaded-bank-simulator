@@ -13,7 +13,7 @@ Additionally, each user also has a savings account at a separate institution, Pu
 
 ## How to Use
 This repository contains all source files, a Makefile for building the program, and an example input file. To use the application:
-1. Navigate to the directory where you've downloaded the files
+1. Navigate to the directory where you've downloaded the files, then navigate into the part 4 folder
 2. Use the 'make' command to build the executable
 3. Use the command './bank input.txt' to execute the program
 4. Final account balances are printed to a file called 'output.txt' in the same directory
